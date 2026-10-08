@@ -1,0 +1,30 @@
+name: tw-market-relay
+
+# 每個交易日收盤後、每月 11 日（月營收公布後）抓一次台股公開資料，存到 data/
+on:
+  schedule:
+    - cron: "40 7 * * 1-5"     # 台灣時間 15:40
+    - cron: "0 3 11 * *"       # 台灣時間每月 11 日 11:00
+  workflow_dispatch:           # 也可以在 Actions 頁面手動執行
+
+permissions:
+  contents: write
+
+jobs:
+  relay:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: python tw_market_data.py --relay data --codes codes.txt --backfill-months 24
+      - name: commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add data
+          git commit -m "market data $(date -u +%F)" || echo "沒有變動"
+          git push
