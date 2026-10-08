@@ -23,6 +23,14 @@ import time
 import unicodedata
 from datetime import date, datetime, timedelta
 
+if os.environ.get("GITHUB_ACTIONS") and not os.environ.get("TZ"):
+    # GitHub 的機器是 UTC：改成台灣時間，檔案裡的時間、日期才會跟 DeskNotes 一致
+    os.environ["TZ"] = "Asia/Taipei"
+    try:
+        time.tzset()
+    except AttributeError:
+        pass
+
 HERE = os.path.dirname(os.path.abspath(__file__))
 STOCK_LIST_FILE = os.path.join(HERE, "tw_stock_list.json")
 
@@ -667,6 +675,18 @@ def fetch_snapshot(progress=None, chips=True, raw_dir=None):
     step("twse_index", index_twse)
     step("twse_rev", rev)
     step("tpex_rev", rev)
+    if not (_DIAG.get("tpex_rev") or {}).get("ok"):
+        # 櫃買 OpenAPI 月營收常常回空白：改讀公開資訊觀測站「上櫃每月營收彙總表」
+        for y, m in recent_rev_months(2):
+            try:
+                got = fetch_rev_month_full(y, m, "otc", sess)
+            except Exception as e:
+                errors.append(f"上櫃月營收（觀測站 {y}-{m:02d}）：{str(e)[:100]}")
+                continue
+            for c, v in got.items():
+                snap["rev"].setdefault(c, v)
+            _diag("tpex_rev_mops", ok=True, ym=f"{y}-{m:02d}", n=len(got))
+            break
     step("twse_exdiv", exdiv)
     step("tpex_exdiv", exdiv)
     if chips:
@@ -2088,6 +2108,42 @@ def fetch_rev_month(year, month, mk, sess=None):
                         continue
                     out[cells[0]] = [f"{year}-{month:02d}", rev, _num(cells[6]), _num(cells[5])]
             _diag(f"mops_rev_{mk}", ok=bool(out), ym=f"{year}-{month:02d}", n=len(out))
+            if out:
+                return out
+            last = RuntimeError("沒有資料（可能還沒公布）")
+        except Exception as e:
+            last = e
+    raise RuntimeError(f"月營收 {year}-{month:02d} {mk}：{last}")
+
+
+def fetch_rev_month_full(year, month, mk, sess=None):
+    """同 fetch_rev_month，但回傳 snapshot 用的完整欄位：{code: {ym, rev, prev, last_year, mom, yoy, cum_yoy}}。
+    觀測站表格欄位：代號｜名稱｜當月｜上月｜去年當月｜上月比較%｜去年同月%｜當月累計｜去年累計｜前期比較%｜備註"""
+    import requests
+    s = sess or requests
+    last = None
+    for tpl in MOPS_REV_URLS:
+        url = tpl.format(mk=mk, y=year - 1911, m=month)
+        try:
+            r = s.get(url, headers=UA, timeout=40)
+            r.raise_for_status()
+            raw = r.content
+            try:
+                txt = raw.decode("big5hkscs")
+            except UnicodeDecodeError:
+                txt = raw.decode("utf-8", errors="ignore")
+            out = {}
+            for _head, rows in _html_tables(txt):
+                for row in rows:
+                    cells = [c.strip() for c in row]
+                    if len(cells) < 7 or not re.fullmatch(r"[0-9]{4,6}[A-Z]?", cells[0]):
+                        continue
+                    rev = _num(cells[2])
+                    if rev is None:
+                        continue
+                    out[cells[0]] = {"ym": f"{year}-{month:02d}", "rev": rev, "prev": _num(cells[3]),
+                                     "last_year": _num(cells[4]), "mom": _num(cells[5]), "yoy": _num(cells[6]),
+                                     "cum_yoy": _num(cells[9]) if len(cells) > 9 else None}
             if out:
                 return out
             last = RuntimeError("沒有資料（可能還沒公布）")
