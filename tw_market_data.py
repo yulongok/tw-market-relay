@@ -938,7 +938,59 @@ def fetch_relay(base_url):
         snap["_etf"] = _get_json(base + "etf.json")
     except Exception:
         pass
+    try:
+        snap["_stocks"] = _get_json(base + "stock_list.json")
+    except Exception:
+        pass
+    try:
+        snap["_rt"] = _get_json(base + "realtime.json")
+    except Exception:
+        pass
     return snap, hist
+
+
+def fetch_relay_realtime(base_url):
+    """只讀 GitHub 轉存的盤中報價 realtime.json：{"at","quotes":{code:{...}}}。"""
+    return _get_json(base_url.rstrip("/") + "/realtime.json")
+
+
+def apply_stock_list(d, path=STOCK_LIST_FILE):
+    """GitHub／手機帶來的代號表（比本機新、筆數夠多才換）。回傳是否更新。"""
+    try:
+        stocks = (d or {}).get("stocks") or {}
+        if len(stocks) < 1000:
+            return False
+        cur = {}
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                cur = json.load(f)
+        except (OSError, ValueError):
+            pass
+        if (cur.get("updated") or "") >= (d.get("updated") or "") and len(cur.get("stocks") or {}) >= len(stocks):
+            return False
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(d, f, ensure_ascii=False, separators=(",", ":"))
+        global _STOCKS, _NAME_RX, _NAME2CODE
+        _STOCKS = _NAME_RX = _NAME2CODE = None
+        return True
+    except Exception:
+        return False
+
+
+def run_relay_realtime(out_dir, codes_file=None):
+    """盤中報價（給 DeskNotes 聯網關閉時讀）：data/realtime.json。"""
+    os.makedirs(out_dir, exist_ok=True)
+    codes = []
+    if codes_file and os.path.isfile(codes_file):
+        with open(codes_file, "r", encoding="utf-8") as f:
+            codes = re.findall(r"[0-9]{4,6}[A-Z]?", f.read())
+    if not codes:
+        print("codes.txt 沒有代號")
+        return
+    rt = fetch_realtime(codes)
+    MarketStore._save_json(os.path.join(out_dir, "realtime.json"),
+                           {"at": datetime.now().strftime("%Y-%m-%d %H:%M"), "quotes": rt})
+    print("盤中報價：", len(rt), "檔")
 
 
 # ─────────────────────────── 計算 ───────────────────────────
@@ -1048,7 +1100,8 @@ class MarketStore:
             merged["prev"] = {"date": old["date"], "close": old.get("close") or {}, "chg": old.get("chg") or {}}
             merged["chg"] = {}          # 新的一天：舊漲跌不要混進來
         for k, v in snap.items():
-            if k == "exdiv" or k in ("_prov", "_src", "prev", "_fin", "_etf"):
+            if k == "exdiv" or k in ("_prov", "_src", "prev", "_fin", "_etf", "_stocks", "_rt", "_last_origin",
+                                     "_origin_log"):
                 continue
             if k == "alerts":                        # 風險警示整份換新（舊的處置可能已解除）
                 if newer:
@@ -1064,6 +1117,12 @@ class MarketStore:
         self.snap = merged
         self._record_prov(snap, origin or {}, newer, old.get("_prov") or {})
         self.snap["fetched"] = datetime.now().strftime("%Y-%m-%d %H:%M")
+        rec = {"at": self.snap["fetched"], "label": (origin or {}).get("label") or "（未標示）",
+               "date": snap.get("date") or ""}
+        self.snap["_last_origin"] = rec
+        log = list(old.get("_origin_log") or [])
+        log.append(rec)
+        self.snap["_origin_log"] = log[-40:]
         ex = {k: [i for i in v if i.get("date", "") >= today] for k, v in old_exdiv.items()}
         for k, v in (snap.get("exdiv") or {}).items():
             cur = ex.setdefault(k, [])
@@ -1444,10 +1503,11 @@ class MarketStore:
         return out
 
     # ----- 即時報價、今日漲跌 -----
-    def set_realtime(self, rt):
+    def set_realtime(self, rt, src="證交所 MIS"):
         self.rt = dict(self.rt or {})
         self.rt.update(rt or {})
         self.rt_at = datetime.now().strftime("%H:%M:%S")
+        self.rt_src = src
 
     def quote(self, code):
         """{"price","chg","pct","src"}；盤中有即時報價用即時，不然用最近一次收盤。"""
@@ -1455,7 +1515,8 @@ class MarketStore:
         if rt and rt.get("price") is not None:
             t = (rt.get("time") or "")[:5]
             return {"price": rt["price"], "chg": rt.get("chg"), "pct": rt.get("pct"),
-                    "src": ("即時 " + t) if t else "即時", "date": rt.get("date"), "rt": True}
+                    "src": ("即時" + ("（GitHub）" if "GitHub" in (getattr(self, "rt_src", "") or "") else "")
+                            + (" " + t if t else "")), "date": rt.get("date"), "rt": True}
         cl = (self.snap.get("close") or {}).get(code)
         ch = (self.snap.get("chg") or {}).get(code)
         d = self.snap.get("date") or ""
@@ -2464,6 +2525,17 @@ def run_relay(out_dir, codes_file=None, backfill_months=0):
             store.merge_history({"vol": vo})
             vdone.add(c)
             store.hist["vol_done"] = sorted(vdone)
+        # 月均價（季節性分析用）：每檔補一次近 6 年，之後由每日股價自動延伸
+        mdone = set(store.hist.setdefault("pxm_done", []))
+        for c in [c for c in codes if c in done and c not in mdone]:
+            if time.time() - t0 > budget * 0.7:
+                print("月均價時間到，下次再補", flush=True)
+                break
+            rows = fetch_monthly_avg(c, 6, progress=print)
+            if rows:
+                store.merge_history({"pxm": {c: rows}})
+            mdone.add(c)
+            store.hist["pxm_done"] = sorted(mdone)
     # market.json 只留追蹤代號的籌碼／集保／成交量（全市場太大）
     if codes:
         for k in ("chips", "tdcc", "vol"):
@@ -2471,6 +2543,13 @@ def run_relay(out_dir, codes_file=None, backfill_months=0):
                 store.snap[k] = {c: v for c, v in store.snap[k].items() if c in set(codes)}
     MarketStore._save_json(os.path.join(out_dir, "market.json"), store.snap)
     MarketStore._save_json(os.path.join(out_dir, "history.json"), store.hist)
+    try:                                   # 股票代號表（上市＋上櫃，一週一次）
+        sl = os.path.join(out_dir, "stock_list.json")
+        old = MarketStore._load(sl) or {}
+        if (old.get("updated") or "") < (date.today() - timedelta(days=7)).isoformat():
+            print("代號表：", refresh_stock_list(sl), "筆", flush=True)
+    except Exception as e:
+        print("警告：代號表更新失敗", e)
     try:                                   # 財報（三率、EPS）：OpenAPI 最新一季＋觀測站近 6 季（只補沒抓過的）
         store.fin = MarketStore._load(os.path.join(out_dir, "fin.json")) or {"q": {}, "done": []}
         nf, ferr = update_fin(store, progress=lambda k: print("抓取", k, flush=True), deadline=t0 + budget)
@@ -2509,10 +2588,13 @@ if __name__ == "__main__":
     ap.add_argument("--codes", help="追蹤代號清單檔（累積歷史、補抓歷史用）")
     ap.add_argument("--backfill-months", type=int, default=0)
     ap.add_argument("--update-list", action="store_true", help="更新 tw_stock_list.json")
+    ap.add_argument("--realtime", action="store_true", help="只抓盤中報價到 realtime.json（配合 --relay）")
     a = ap.parse_args()
     if a.update_list:
         print("代號表筆數：", refresh_stock_list())
-    if a.relay:
+    if a.relay and a.realtime:
+        run_relay_realtime(a.relay, a.codes)
+    elif a.relay:
         run_relay(a.relay, a.codes, a.backfill_months)
     if not (a.relay or a.update_list):
         ap.print_help()

@@ -116,7 +116,7 @@ const RWD_EXDIV = "https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json";
 const INDEX_KEY = "^TAIEX";
 const SRC_NAME = { twse_pe: "證交所 OpenAPI 本益比", twse_close: "證交所 OpenAPI 收盤", twse_index: "證交所 OpenAPI 指數", twse_rev: "上市月營收",
   twse_exdiv: "證交所 OpenAPI 除權息", tpex_pe: "上櫃本益比", tpex_close: "上櫃收盤", tpex_rev: "上櫃月營收", tpex_exdiv: "上櫃除權息" };
-const LIMIT = { pe: 1500, rev: 60, px: 520, chips: 120, tdcc: 60, vol: 520 };
+const LIMIT = { pe: 1500, rev: 60, px: 520, chips: 120, tdcc: 60, vol: 520, pxm: 240 };
 
 // ---------- 小工具 ----------
 const $ = id => document.getElementById(id);
@@ -188,7 +188,7 @@ function updateCodesInfo() {
 
 // ---------- 狀態 ----------
 let snap = null;                                   // 今天的快照
-let hist = { pe: {}, rev: {}, px: {}, chips: {}, tdcc: {}, vol: {} };   // 本次補抓的歷史
+let hist = { pe: {}, rev: {}, px: {}, chips: {}, tdcc: {}, vol: {}, pxm: {} };   // 本次補抓的歷史
 function append(kind, code, row) {
   const lst = hist[kind][code] || (hist[kind][code] = []);
   const i = lst.findIndex(r => r[0] === row[0]);
@@ -438,8 +438,9 @@ async function backfill(only) {
 // ---------- 輸出 ----------
 let fin = null;                                    // GitHub 抓的財報（只留追蹤代號）
 let etf = null;                                    // GitHub 抓的 ETF 成分股
+let stockList = null;                              // GitHub 每週更新的股票代號表
 function bundle() {
-  return { format: "desknotes-market-v1", created: new Date().toISOString(), codes: codes(), market: snap, history: hist, fin, etf };
+  return { format: "desknotes-market-v1", created: new Date().toISOString(), codes: codes(), market: snap, history: hist, fin, etf, stock_list: stockList };
 }
 
 // ---------- 🚀 一次抓全部 ----------
@@ -508,6 +509,7 @@ async function fetchAll() {
         log(`財報：${Object.keys(fin.q).length} 檔（三率、EPS）、資產負債 ${Object.keys(fin.bs).length} 檔`, "ok"); }
       else log("GitHub 上還沒有 fin.json（請確認 tw_market_data.py 已更新到新版）", "warn");
       try { const e = await ghGet(g, `${g.dir}/etf.json`); if (e.json) { etf = e.json; log(`ETF 成分股：${Object.keys(etf.funds || {}).length} 檔 ETF`, "ok"); } } catch (e) { }
+      try { const s = await ghGet(g, `${g.dir}/stock_list.json`); if (s.json && s.json.stocks) { stockList = s.json; log(`股票代號表：${Object.keys(s.json.stocks).length} 筆（${s.json.updated || ""}）`, "ok"); } } catch (e) { }
     } else {
       log("沒有 GitHub 設定：只補手機抓得到的歷史（上市），已補過的代號跳過。財報、月營收、上櫃要 GitHub 或電腦版。", "warn");
       let done = {}; try { done = JSON.parse(localStorage.getItem("tw_backfilled") || "{}"); } catch (e) { }
