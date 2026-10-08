@@ -1,1 +1,34 @@
+name: tw-realtime
 
+# 盤中報價：台灣時間週一到週五 9:00～13:59，每 20 分鐘抓一次觀察股＋候選股（codes.txt），存到 data/realtime.json
+on:
+  schedule:
+    - cron: "*/20 1-5 * * 1-5"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: relay-push
+  cancel-in-progress: false
+
+jobs:
+  realtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install requests
+      - run: python tw_market_data.py --relay data --codes codes.txt --realtime
+      - name: commit
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@users.noreply.github.com"
+          git add data/realtime.json
+          git commit -m "realtime $(date -u +%F_%H%M)" || exit 0
+          git pull --rebase
+          git push
