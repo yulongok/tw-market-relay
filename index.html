@@ -1,0 +1,659 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>台股資料抓取</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#1f2328;--muted:#6b7280;--line:#e2e5ea;--accent:#e8590c;--ok:#15803d;--bad:#c62828;--warn:#b45309}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#1e1f26;--card:#24262f;--ink:#e8e9ee;--muted:#8a8d98;--line:#33353f;--accent:#ff8a3d;--ok:#51cf66;--bad:#ff6b6b;--warn:#ffb454}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,"Noto Sans TC","Microsoft JhengHei",sans-serif;padding:16px;padding-bottom:40px}
+h1{font-size:20px;margin:4px 0 2px}
+.sub{color:var(--muted);font-size:13px;margin-bottom:12px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin:12px 0}
+.card h2{font-size:16px;margin:0 0 8px}
+label{display:block;font-size:13px;color:var(--muted);margin:8px 0 4px}
+textarea,input{width:100%;font:inherit;color:var(--ink);background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
+textarea{min-height:70px}
+.row{display:flex;gap:8px;flex-wrap:wrap}
+.row>*{flex:1 1 140px}
+button{font:inherit;border:0;border-radius:10px;padding:12px 10px;background:var(--line);color:var(--ink);width:100%;margin-top:8px}
+button.primary{background:var(--accent);color:#fff;font-weight:600}
+button:disabled{opacity:.5}
+.chk{display:flex;align-items:center;gap:8px;margin-top:8px;font-size:14px}
+.chk input{width:auto}
+#log{font:13px/1.45 ui-monospace,Menlo,Consolas,monospace;white-space:pre-wrap;max-height:300px;overflow:auto;background:var(--bg);border-radius:8px;padding:8px;border:1px solid var(--line)}
+.ok{color:var(--ok)}.bad{color:var(--bad)}.warn{color:var(--warn)}
+.stat{display:grid;grid-template-columns:1fr 1fr;gap:6px;font-size:14px}
+.stat b{font-size:18px}
+details summary{cursor:pointer;color:var(--muted);font-size:14px}
+.hint{font-size:13px;color:var(--muted)}
+</style>
+</head>
+<body>
+<h1>📈 台股資料抓取</h1>
+<div class="sub">用手機網路抓證交所／櫃買中心公開資料，存檔或推到 GitHub，給 DeskNotes 觀察股用。</div>
+
+<div class="card">
+  <h2>1. 追蹤的股票</h2>
+  <label>代號（空白、逗號、換行分隔；在 DeskNotes「🗄 工具2 → 📋 複製觀察股代號」可以一次複製）</label>
+  <textarea id="codes" placeholder="2330 2317 2454 6488"></textarea>
+  <div class="hint" id="codesInfo"></div>
+  <button id="btnCodesFile">📂 讀代號檔（雲端硬碟 desknotes_codes.txt，DeskNotes 自動產生）</button>
+  <input type="file" id="codesFile" accept=".txt,.csv,text/plain" style="display:none">
+</div>
+
+<div class="card">
+  <h2>2. 抓資料</h2>
+  <button id="btnAll" class="primary">🚀 一次抓全部（今日＋歷史＋財報＋月營收，然後存檔）</button>
+  <div class="hint">有填「GitHub 設定」：手機抓今日資料，歷史、財報（三率、EPS、資產負債）、月營收、上櫃股交給 GitHub Actions 抓，
+    抓完自動合併成一個檔。沒填 GitHub：只抓手機抓得到的（上市今日＋歷史），新代號才補歷史。</div>
+  <button id="btnTest">🩺 測試連線</button>
+  <button id="btnToday" class="primary">⬇ 抓今天的資料</button>
+  <div class="chk"><input type="checkbox" id="optChips" checked><span>含法人籌碼、融資、集保大戶</span></div>
+  <button id="btnHist">📥 補抓歷史（估值 24 個月、股價 13 個月、籌碼 20 天）</button>
+  <div class="hint">補抓歷史每檔約 1 分鐘（證交所有流量限制），螢幕不要關。抓完一樣要存檔或推到 GitHub。</div>
+  <button id="btnStop" disabled>⏹ 停止</button>
+</div>
+
+<div class="card">
+  <h2>3. 交給 DeskNotes</h2>
+  <div class="stat" id="stat"></div>
+  <button id="btnSave" class="primary" disabled>💾 存檔／分享（LINE、雲端硬碟…）</button>
+  <div class="hint">檔名 desknotes_market_日期.json。分享時選「雲端硬碟」，存到同步到電腦 <b>D:\desknots backup\file</b> 的資料夾，
+    DeskNotes 觀察股會自動讀取（或「🗄 工具2 → 📂 立即讀取雲端硬碟資料夾」）。</div>
+  <button id="btnPush" disabled>☁ 推到 GitHub（DeskNotes 從轉存網址讀）</button>
+  <button id="btnDispatch">▶ 請 GitHub Actions 現在抓（手機抓不到時用）</button>
+  <details style="margin-top:10px"><summary>GitHub 設定</summary>
+    <div class="row">
+      <div><label>帳號</label><input id="ghOwner" placeholder="your-name"></div>
+      <div><label>Repository</label><input id="ghRepo" placeholder="tw-market-relay"></div>
+    </div>
+    <div class="row">
+      <div><label>分支</label><input id="ghBranch" placeholder="main"></div>
+      <div><label>資料夾</label><input id="ghDir" placeholder="data"></div>
+    </div>
+    <label>Token（fine-grained：這個 repo 的 Contents、Actions 讀寫權限；只存在這支手機的瀏覽器）</label>
+    <input id="ghToken" type="password" placeholder="github_pat_…">
+  </details>
+</div>
+
+<div class="card">
+  <h2>紀錄</h2>
+  <div id="log"></div>
+</div>
+
+<script>
+const MARKET_MAP = "1101L,1102L,1103L,1104L,1108L,1109L,1110L,1201L,1203L,1210L,1213L,1215L,1216L,1217L,1218L,1219L,1220L,1225L,1227L,1229L,1231L,1232L,1233L,1234L,1235L,1236L,1256L,1301L,1303L,1304L,1305L,1307L,1308L,1309L,1310L,1312L,1313L,1314L,1315L,1316L,1319L,1321L,1323L,1324L,1325L,1326L,1337L,1338L,1339L,1340L,1341L,1342L,1402L,1409L,1410L,1413L,1414L,1416L,1417L,1418L,1419L,1423L,1432L,1434L,1435L,1436L,1437L,1438L,1439L,1440L,1441L,1442L,1443L,1444L,1445L,1446L,1447L,1449L,1451L,1452L,1453L,1454L,1455L,1456L,1457L,1459L,1460L,1463L,1464L,1465L,1466L,1467L,1468L,1470L,1471L,1472L,1473L,1474L,1475L,1476L,1477L,1503L,1504L,1506L,1512L,1513L,1514L,1515L,1516L,1517L,1519L,1521L,1522L,1524L,1525L,1526L,1527L,1528L,1529L,1530L,1531L,1532L,1533L,1535L,1536L,1537L,1538L,1539L,1540L,1541L,1558L,1560L,1563L,1568L,1582L,1583L,1587L,1589L,1590L,1597L,1598L,1603L,1604L,1605L,1608L,1609L,1611L,1612L,1614L,1615L,1616L,1617L,1618L,1623L,1626L,1702L,1707L,1708L,1709L,1710L,1711L,1712L,1713L,1714L,1717L,1718L,1720L,1721L,1722L,1723L,1725L,1726L,1727L,1730L,1731L,1732L,1733L,1734L,1735L,1736L,1737L,1752L,1760L,1762L,1773L,1776L,1783L,1786L,1789L,1795L,1802L,1805L,1806L,1808L,1809L,1810L,1817L,1903L,1904L,1905L,1906L,1907L,1909L,2002L,2006L,2007L,2008L,2009L,2010L,2012L,2013L,2014L,2015L,2017L,2020L,2022L,2023L,2024L,2025L,2027L,2028L,2029L,2030L,2031L,2032L,2033L,2034L,2038L,2049L,2059L,2062L,2069L,2072L,2101L,2102L,2103L,2104L,2105L,2106L,2107L,2108L,2109L,2114L,2115L,2201L,2204L,2206L,2207L,2208L,2211L,2227L,2228L,2231L,2233L,2236L,2239L,2241L,2243L,2247L,2248L,2250L,2301L,2302L,2303L,2305L,2308L,2312L,2313L,2314L,2316L,2317L,2321L,2323L,2324L,2327L,2328L,2329L,2330L,2331L,2332L,2337L,2338L,2340L,2342L,2344L,2345L,2347L,2348L,2349L,2351L,2352L,2353L,2354L,2355L,2356L,2357L,2359L,2360L,2362L,2363L,2364L,2365L,2367L,2368L,2369L,2371L,2373L,2374L,2375L,2376L,2377L,2379L,2380L,2382L,2383L,2385L,2387L,2388L,2390L,2392L,2393L,2395L,2397L,2399L,2401L,2402L,2404L,2405L,2406L,2408L,2409L,2412L,2413L,2414L,2415L,2417L,2419L,2420L,2421L,2423L,2424L,2425L,2426L,2427L,2428L,2429L,2430L,2431L,2433L,2434L,2436L,2438L,2439L,2440L,2441L,2442L,2444L,2449L,2450L,2451L,2453L,2454L,2455L,2457L,2458L,2459L,2460L,2461L,2462L,2464L,2465L,2466L,2467L,2468L,2471L,2472L,2474L,2476L,2477L,2478L,2480L,2481L,2482L,2483L,2484L,2485L,2486L,2488L,2489L,2491L,2492L,2493L,2495L,2496L,2497L,2498L,2501L,2504L,2505L,2506L,2509L,2511L,2514L,2515L,2516L,2520L,2524L,2527L,2528L,2530L,2534L,2535L,2536L,2537L,2538L,2539L,2540L,2542L,2543L,2545L,2546L,2547L,2548L,2597L,2601L,2603L,2605L,2606L,2607L,2608L,2609L,2610L,2611L,2612L,2613L,2614L,2615L,2616L,2617L,2618L,2630L,2633L,2634L,2636L,2637L,2642L,2645L,2646L,2701L,2702L,2704L,2705L,2706L,2707L,2712L,2722L,2723L,2727L,2731L,2739L,2748L,2753L,2762L,2801L,2812L,2816L,2820L,2832L,2834L,2836L,2838L,2845L,2849L,2850L,2851L,2852L,2855L,2867L,2880L,2881L,2882L,2883L,2884L,2885L,2886L,2887L,2889L,2890L,2891L,2892L,2897L,2901L,2903L,2904L,2905L,2906L,2908L,2910L,2911L,2912L,2913L,2915L,2923L,2929L,2939L,2945L,3002L,3003L,3004L,3005L,3006L,3008L,3010L,3011L,3013L,3014L,3015L,3016L,3017L,3018L,3019L,3021L,3022L,3023L,3024L,3025L,3026L,3027L,3028L,3029L,3030L,3031L,3032L,3033L,3034L,3035L,3036L,3037L,3038L,3040L,3041L,3042L,3043L,3044L,3045L,3046L,3047L,3048L,3049L,3050L,3051L,3052L,3054L,3055L,3056L,3057L,3058L,3059L,3060L,3062L,3090L,3092L,3094L,3130L,3135L,3138L,3149L,3164L,3167L,3168L,3189L,3209L,3229L,3231L,3257L,3266L,3296L,3305L,3308L,3311L,3312L,3321L,3338L,3346L,3356L,3376L,3380L,3406L,3413L,3416L,3419L,3432L,3437L,3443L,3447L,3450L,3481L,3494L,3501L,3504L,3515L,3518L,3528L,3530L,3532L,3533L,3535L,3543L,3545L,3550L,3557L,3563L,3576L,3583L,3588L,3591L,3592L,3593L,3596L,3605L,3607L,3617L,3622L,3645L,3652L,3653L,3661L,3665L,3669L,3673L,3679L,3686L,3694L,3701L,3702L,3703L,3704L,3705L,3706L,3708L,3711L,3712L,3714L,3715L,3716L,3717L,4104L,4106L,4108L,4119L,4133L,4137L,4142L,4148L,4155L,4164L,4190L,4306L,4414L,4426L,4438L,4439L,4440L,4441L,4526L,4532L,4536L,4540L,4545L,4551L,4552L,4555L,4557L,4560L,4562L,4564L,4566L,4569L,4571L,4572L,4576L,4581L,4583L,4585L,4588L,4720L,4722L,4736L,4737L,4739L,4746L,4755L,4763L,4764L,4766L,4770L,4771L,4807L,4904L,4906L,4912L,4915L,4916L,4919L,4927L,4930L,4934L,4935L,4938L,4942L,4943L,4949L,4952L,4956L,4958L,4960L,4961L,4967L,4968L,4976L,4977L,4989L,4994L,4999L,5007L,5203L,5215L,5222L,5225L,5234L,5243L,5244L,5258L,5269L,5283L,5284L,5285L,5288L,5292L,5306L,5388L,5434L,5469L,5471L,5484L,5515L,5519L,5521L,5522L,5525L,5531L,5533L,5534L,5538L,5546L,5607L,5608L,5706L,5871L,5876L,5880L,5906L,5907L,6005L,6024L,6108L,6112L,6115L,6116L,6117L,6120L,6128L,6133L,6136L,6139L,6141L,6142L,6152L,6153L,6155L,6164L,6165L,6166L,6168L,6176L,6177L,6183L,6184L,6189L,6191L,6192L,6196L,6197L,6201L,6202L,6205L,6206L,6209L,6213L,6214L,6215L,6216L,6224L,6225L,6226L,6230L,6235L,6239L,6243L,6257L,6269L,6271L,6272L,6277L,6278L,6281L,6282L,6283L,6285L,6405L,6409L,6412L,6414L,6415L,6416L,6426L,6431L,6438L,6442L,6443L,6446L,6449L,6451L,6456L,6464L,6472L,6477L,6491L,6504L,6505L,6515L,6525L,6526L,6531L,6533L,6541L,6550L,6552L,6558L,6573L,6579L,6581L,6582L,6585L,6589L,6591L,6592L,6598L,6605L,6606L,6614L,6625L,6641L,6655L,6657L,6658L,6666L,6668L,6669L,6670L,6671L,6672L,6674L,6689L,6691L,6695L,6698L,6706L,6715L,6719L,6722L,6742L,6743L,6753L,6754L,6756L,6757L,6768L,6770L,6776L,6781L,6782L,6789L,6790L,6792L,6794L,6796L,6799L,6805L,6806L,6807L,6830L,6831L,6834L,6835L,6838L,6861L,6862L,6863L,6869L,6873L,6885L,6887L,6890L,6901L,6902L,6906L,6909L,6914L,6916L,6918L,6919L,6923L,6928L,6931L,6933L,6934L,6936L,6937L,6944L,6952L,6957L,6958L,6962L,6965L,6994L,7705L,7711L,7721L,7722L,7732L,7736L,7749L,7750L,7765L,7769L,7780L,7786L,7788L,7791L,7795L,7799L,8011L,8016L,8021L,8028L,8033L,8039L,8045L,8046L,8070L,8072L,8081L,8101L,8103L,8104L,8105L,8110L,8112L,8114L,8131L,8150L,8163L,8201L,8210L,8213L,8215L,8222L,8249L,8261L,8271L,8341L,8367L,8374L,8404L,8411L,8422L,8429L,8438L,8442L,8443L,8454L,8462L,8463L,8464L,8466L,8467L,8473L,8476L,8478L,8481L,8482L,8488L,8499L,8926L,8940L,8996L,9802L,9902L,9904L,9905L,9906L,9907L,9908L,9910L,9911L,9912L,9914L,9917L,9918L,9919L,9921L,9924L,9925L,9926L,9927L,9928L,9929L,9930L,9931L,9933L,9934L,9935L,9937L,9938L,9939L,9940L,9941L,9942L,9943L,9944L,9945L,9946L,9955L,9958L,1101BL,1312AL,1522AL,2002AL,2348AL,2836AL,2838AL,2881AL,2881BL,2881CL,2882AL,2882BL,2883BL,2887EL,2887FL,2887GL,2887HL,2887IL,2887Z1L,2891BL,2891CL,2897BL,5871AL,6592AL,6592BL,6958AL,8112AL,9941AL,0050L,0051L,0052L,0053L,0055L,0056L,0057L,0061L,006203L,006204L,006205L,006206L,006207L,006208L,00625KL,00631LL,00632RL,00633LL,00634RL,00635UL,00636L,00636KL,00637LL,00638RL,00639L,00640LL,00641RL,00642UL,00643L,00643KL,00645L,00646L,00647LL,00648RL,00650LL,00651RL,00652L,00653LL,00654RL,00655LL,00656RL,00657L,00657KL,00660L,00661L,00662L,00663LL,00664RL,00665LL,00666RL,00668L,00668KL,00669RL,00670LL,00671RL,00673RL,00674RL,00675LL,00676RL,00678L,00680LL,00681RL,00682UL,00683LL,00684RL,00685LL,00686RL,00688LL,00689RL,00690L,00692L,00693UL,00700L,00701L,00702L,00703L,00706LL,00707RL,00708LL,00709L,00710BL,00711BL,00712L,00713L,00714L,00715LL,00717L,00728L,00730L,00731L,00733L,00735L,00736L,00737L,00738UL,00739L,00752L,00753LL,00757L,00762L,00763UL,00770L,00771L,00775BL,00783L,00830L,00850L,00851L,00852LL,00861L,00865BL,00875L,00876L,00878L,00881L,00882L,00885L,00891L,00892L,00893L,00894L,00895L,00896L,00897L,00898L,00899L,00900L,00901L,00902L,00903L,00904L,00905L,00907L,00908L,00909L,00910L,00911L,00912L,00913L,00915L,00916L,00917L,00918L,00919L,00920L,00921L,00922L,00923L,00924L,00926L,00927L,00929L,00930L,00932L,00934L,00935L,00936L,00938L,00939L,00940L,00941L,00943L,00944L,00945BL,00946L,00947L,00949L,00951L,00952L,00953BL,00954L,00956L,00960L,00961L,00962L,00963L,00964L,00965L,00971L,00972L,009800L,009801L,009802L,009803L,009804L,009805L,009808L,009809L,00980AL,009810L,009811L,009812L,009813L,009816L,009817L,009818L,00981AL,00981TL,00982AL,00982DL,00982TL,00983AL,00983DL,00984AL,00984DL,00985AL,00985BL,00986AL,00987AL,00988AL,00989AL,00990AL,00991AL,00992AL,00993AL,00994AL,00995AL,00996AL,020000L,020011L,020012L,02001LL,02001RL,020020L,020028L,020029L,020030L,020031L,020032L,020034L,020036L,020037L,020038L,020039L,9103L,910322L,9105L,910861L,9110L,911608L,911622L,911868L,912000L,9136L,01001TL,01002TL,01004TL,01007TL,01009TL,01010TL,006201O,00679BO,00687BO,00687CO,00694BO,00695BO,00696BO,00697BO,00719BO,00720BO,00722BO,00723BO,00724BO,00725BO,00726BO,00727BO,00734BO,00740BO,00741BO,00746BO,00749BO,00750BO,00751BO,00754BO,00755BO,00756BO,00758BO,00759BO,00760BO,00761BO,00764BO,00768BO,00772BO,00773BO,00777BO,00778BO,00779BO,00780BO,00781BO,00782BO,00785BO,00786BO,00787BO,00788BO,00789BO,00791BO,00792BO,00793BO,00795BO,00799BO,00834BO,00836BO,00838BO,00840BO,00841BO,00842BO,00844BO,00845BO,00846BO,00847BO,00848BO,00849BO,00853BO,00856BO,00857BO,00858O,00859BO,00860BO,00862BO,00863BO,00864BO,00867BO,00870BO,00877O,00883BO,00884BO,00886O,00887O,00888O,00890BO,00928O,00931BO,00933BO,00937BO,00942BO,00948BO,00950BO,00955O,00957BO,00958BO,00959BO,00966BO,00967BO,00968BO,00969BO,00970BO,009806O,009807O,00980BO,00980DO,00980TO,009814O,009815O,00981BO,00981DO,00982BO,00983BO,00984BO,00985DO,00986BO,00987BO,00988BO,00989BO,020001O,020025O,020027O,020033O,020035O,020040O,020041O,1240O,1259O,1264O,1268O,1294O,1295O,1336O,1565O,1569O,1570O,1580O,1584O,1586O,1591O,1593O,1595O,1599O,1742O,1777O,1781O,1784O,1785O,1788O,1796O,1799O,1813O,1815O,2035O,2061O,2063O,2064O,2065O,2066O,2067O,2070O,2073O,2221O,2230O,2235O,2596O,2640O,2641O,2643O,2718O,2719O,2724O,2726O,2729O,2732O,2734O,2736O,2740O,2743O,2745O,2751O,2752O,2754O,2755O,2756O,2916O,2924O,2926O,2937O,2941O,2947O,2948O,2949O,3064O,3066O,3067O,3071O,3073O,3078O,3081O,3083O,3085O,3086O,3088O,3093O,3095O,3105O,3114O,3115O,3118O,3122O,3128O,3131O,3141O,3147O,3152O,3158O,3162O,3163O,3169O,3171O,3176O,3178O,3188O,3191O,3205O,3206O,3207O,3211O,3213O,3217O,3218O,3219O,3221O,3224O,3226O,3227O,3228O,3230O,3232O,3234O,3236O,3252O,3259O,3260O,3264O,3265O,3268O,3272O,3276O,3284O,3285O,3287O,3288O,3289O,3290O,3293O,3294O,3297O,3303O,3306O,3310O,3313O,3317O,3322O,3323O,3324O,3325O,3332O,3339O,3349O,3354O,3357O,3360O,3362O,3363O,3372O,3373O,3374O,3379O,3388O,3390O,3402O,3426O,3430O,3434O,3438O,3441O,3444O,3455O,3465O,3466O,3467O,3479O,3483O,3484O,3489O,3490O,3491O,3492O,3498O,3499O,3508O,3511O,3512O,3516O,3520O,3521O,3522O,3523O,3526O,3527O,3529O,3531O,3537O,3540O,3541O,3546O,3548O,3551O,3552O,3555O,3556O,3558O,3564O,3567O,3570O,3577O,3580O,3581O,3587O,3594O,3597O,3609O,3611O,3615O,3623O,3624O,3625O,3628O,3629O,3630O,3631O,3632O,3646O,3663O,3664O,3666O,3672O,3675O,3680O,3684O,3685O,3687O,3689O,3691O,3693O,3707O,3709O,3710O,3713O,4102O,4105O,4107O,4109O,4111O,4113O,4114O,4116O,4120O,4121O,4123O,4126O,4127O,4128O,4129O,4130O,4131O,4138O,4139O,4147O,4153O,4154O,4157O,4160O,4161O,4162O,4163O,4166O,4167O,4168O,4171O,4173O,4174O,4175O,4183O,4188O,4192O,4198O,4205O,4207O,4303O,4304O,4305O,4401O,4402O,4406O,4413O,4416O,4417O,4419O,4420O,4430O,4432O,4433O,4442O,4502O,4503O,4506O,4510O,4513O,4523O,4527O,4528O,4529O,4530O,4533O,4534O,4535O,4538O,4541O,4542O,4543O,4549O,4550O,4554O,4556O,4558O,4561O,4563O,4568O,4577O,4580O,4584O,4609O,4702O,4706O,4707O,4711O,4714O,4716O,4721O,4726O,4728O,4729O,4735O,4741O,4743O,4744O,4745O,4747O,4749O,4754O,4760O,4767O,4768O,4772O,4804O,4806O,4903O,4905O,4907O,4908O,4909O,4911O,4923O,4924O,4931O,4933O,4939O,4946O,4950O,4951O,4953O,4966O,4971O,4972O,4973O,4974O,4979O,4987O,4991O,4995O,5009O,5011O,5013O,5014O,5015O,5016O,5201O,5202O,5205O,5206O,5209O,5210O,5211O,5212O,5213O,5220O,5223O,5227O,5228O,5230O,5236O,5245O,5251O,5263O,5272O,5274O,5276O,5278O,5287O,5289O,5291O,5299O,5301O,5302O,5309O,5310O,5312O,5314O,5315O,5321O,5324O,5328O,5340O,5344O,5345O,5347O,5348O,5351O,5353O,5355O,5356O,5364O,5371O,5381O,5386O,5392O,5398O,5403O,5410O,5425O,5426O,5432O,5438O,5439O,5443O,5450O,5452O,5455O,5457O,5460O,5464O,5465O,5468O,5474O,5475O,5478O,5481O,5483O,5487O,5488O,5489O,5490O,5493O,5498O,5508O,5511O,5512O,5514O,5516O,5520O,5523O,5529O,5530O,5536O,5543O,5547O,5548O,5601O,5603O,5604O,5609O,5701O,5703O,5704O,5864O,5878O,5902O,5903O,5904O,5905O,6015O,6016O,6020O,6021O,6023O,6026O,6101O,6103O,6104O,6109O,6111O,6113O,6114O,6118O,6121O,6122O,6123O,6124O,6125O,6126O,6127O,6129O,6130O,6134O,6138O,6140O,6143O,6144O,6146O,6147O,6148O,6150O,6151O,6154O,6156O,6158O,6160O,6161O,6163O,6167O,6169O,6170O,6171O,6173O,6174O,6175O,6179O,6180O,6182O,6185O,6186O,6187O,6188O,6190O,6194O,6195O,6198O,6199O,6203O,6204O,6207O,6208O,6210O,6212O,6217O,6218O,6219O,6220O,6221O,6222O,6223O,6227O,6228O,6229O,6231O,6233O,6234O,6236O,6237O,6240O,6241O,6242O,6244O,6245O,6246O,6248O,6259O,6261O,6263O,6264O,6265O,6266O,6270O,6274O,6275O,6276O,6279O,6284O,6290O,6291O,6292O,6294O,6411O,6417O,6418O,6419O,6423O,6425O,6432O,6435O,6441O,6461O,6462O,6465O,6469O,6470O,6474O,6482O,6485O,6486O,6488O,6492O,6494O,6496O,6498O,6499O,6506O,6508O,6509O,6510O,6512O,6516O,6517O,6523O,6527O,6530O,6532O,6535O,6538O,6542O,6546O,6547O,6548O,6556O,6560O,6561O,6568O,6569O,6570O,6574O,6576O,6577O,6578O,6584O,6588O,6590O,6593O,6596O,6597O,6603O,6609O,6612O,6613O,6615O,6616O,6617O,6620O,6624O,6629O,6637O,6640O,6642O,6643O,6649O,6651O,6654O,6661O,6662O,6664O,6667O,6679O,6680O,6683O,6684O,6690O,6692O,6693O,6697O,6703O,6708O,6712O,6716O,6720O,6721O,6725O,6727O,6728O,6730O,6732O,6733O,6735O,6739O,6741O,6751O,6752O,6761O,6762O,6763O,6767O,6785O,6788O,6791O,6803O,6804O,6811O,6821O,6823O,6829O,6840O,6841O,6843O,6844O,6846O,6855O,6856O,6859O,6865O,6870O,6872O,6874O,6875O,6877O,6881O,6884O,6894O,6895O,6899O,6903O,6904O,6907O,6910O,6913O,6922O,6925O,6929O,6953O,6961O,6967O,6968O,6971O,6982O,6996O,6997O,7402O,7547O,7556O,7584O,7642O,7703O,7704O,7708O,7709O,7712O,7713O,7714O,7715O,7716O,7717O,7718O,7723O,7728O,7734O,7738O,7743O,7744O,7747O,7751O,7753O,7757O,7767O,7770O,7777O,7782O,7792O,7805O,7810O,7811O,8024O,8027O,8032O,8034O,8038O,8040O,8042O,8043O,8044O,8047O,8048O,8049O,8050O,8054O,8059O,8064O,8066O,8067O,8068O,8069O,8071O,8074O,8076O,8077O,8080O,8083O,8084O,8085O,8086O,8087O,8088O,8089O,8091O,8092O,8093O,8096O,8097O,8099O,8102O,8107O,8109O,8111O,8121O,8147O,8155O,8171O,8176O,8182O,8183O,8227O,8234O,8240O,8255O,8272O,8277O,8279O,8284O,8289O,8291O,8299O,8342O,8349O,8354O,8358O,8383O,8390O,8401O,8403O,8409O,8410O,8415O,8416O,8421O,8423O,8424O,8426O,8431O,8432O,8433O,8435O,8436O,8437O,8440O,8444O,8446O,8450O,8455O,8472O,8477O,8489O,8905O,8906O,8908O,8916O,8917O,8921O,8923O,8924O,8927O,8928O,8929O,8930O,8931O,8932O,8933O,8935O,8936O,8937O,8938O,8941O,8942O,9949O,9950O,9951O,9960O,9962O,8349AO";   // 代號 → L(上市)／O(上櫃)
+const MKT = {};
+for (const t of MARKET_MAP.split(",")) { if (t) MKT[t.slice(0, -1)] = t.slice(-1); }
+
+const URLS = {
+  twse_pe: "https://openapi.twse.com.tw/v1/exchangeReport/BWIBBU_ALL",
+  twse_close: "https://openapi.twse.com.tw/v1/exchangeReport/STOCK_DAY_ALL",
+  twse_index: "https://openapi.twse.com.tw/v1/exchangeReport/MI_INDEX",
+  twse_rev: "https://openapi.twse.com.tw/v1/opendata/t187ap05_L",
+  twse_exdiv: "https://openapi.twse.com.tw/v1/exchangeReport/TWT48U_ALL",
+  tpex_pe: "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_peratio_analysis",
+  tpex_close: "https://www.tpex.org.tw/openapi/v1/tpex_mainboard_daily_close_quotes",
+  tpex_rev: "https://www.tpex.org.tw/openapi/v1/mopsfe_t187ap05_O",
+  tpex_exdiv: "https://www.tpex.org.tw/openapi/v1/tpex_exright_prepost_schedule",
+};
+const T86 = d => `https://www.twse.com.tw/rwd/zh/fund/T86?date=${ymd(d)}&selectType=ALLBUT0999&response=json`;
+const TPEX_T86 = d => `https://www.tpex.org.tw/web/stock/3insti/daily_trade/3itrade_hedge_result.php?l=zh-tw&se=EW&t=D&d=${roc(d)}&o=json`;
+const MARGIN = d => `https://www.twse.com.tw/rwd/zh/marginTrading/MI_MARGN?date=${ymd(d)}&selectType=ALL&response=json`;
+const TDCC = "https://opendata.tdcc.com.tw/getOD.ashx?id=1-5";
+const PE_HIST = (d, c) => `https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU?date=${ymd(d, true)}&stockNo=${c}&response=json`;
+const PX_HIST = (d, c) => `https://www.twse.com.tw/rwd/zh/afterTrading/STOCK_DAY?date=${ymd(d, true)}&stockNo=${c}&response=json`;
+const TPEX_PX = (d, c) => `https://www.tpex.org.tw/web/stock/aftertrading/daily_trading_info/st43_result.php?l=zh-tw&d=${d.getFullYear() - 1911}/${p2(d.getMonth() + 1)}&stkno=${c}`;
+const IDX_HIST = d => `https://www.twse.com.tw/rwd/zh/afterTrading/FMTQIK?date=${ymd(d, true)}&response=json`;
+const IDX_HIST2 = d => `https://www.twse.com.tw/rwd/zh/indicesReport/MI_5MINS_HIST?date=${ymd(d, true)}&response=json`;
+// 手機瀏覽器能讀的證交所 rwd 網址（OpenAPI 被 CORS 擋）
+const RWD_PE = d => `https://www.twse.com.tw/rwd/zh/afterTrading/BWIBBU_d?date=${ymd(d)}&selectType=ALL&response=json`;
+const RWD_DAY = d => `https://www.twse.com.tw/rwd/zh/afterTrading/MI_INDEX?date=${ymd(d)}&type=ALLBUT0999&response=json`;
+const RWD_EXDIV = "https://www.twse.com.tw/rwd/zh/exRight/TWT48U?response=json";
+const INDEX_KEY = "^TAIEX";
+const SRC_NAME = { twse_pe: "證交所 OpenAPI 本益比", twse_close: "證交所 OpenAPI 收盤", twse_index: "證交所 OpenAPI 指數", twse_rev: "上市月營收",
+  twse_exdiv: "證交所 OpenAPI 除權息", tpex_pe: "上櫃本益比", tpex_close: "上櫃收盤", tpex_rev: "上櫃月營收", tpex_exdiv: "上櫃除權息" };
+const LIMIT = { pe: 1500, rev: 60, px: 520, chips: 120, tdcc: 60, vol: 520 };
+
+// ---------- 小工具 ----------
+const $ = id => document.getElementById(id);
+const p2 = n => String(n).padStart(2, "0");
+const iso = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
+function ymd(d, first) { return `${d.getFullYear()}${p2(d.getMonth() + 1)}${first ? "01" : p2(d.getDate())}`; }
+function roc(d) { return `${d.getFullYear() - 1911}/${p2(d.getMonth() + 1)}/${p2(d.getDate())}`; }
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+let stopFlag = false;
+function log(msg, cls) {
+  const el = $("log"); const line = document.createElement("div");
+  if (cls) line.className = cls;
+  line.textContent = `${new Date().toTimeString().slice(0, 8)} ${msg}`;
+  el.appendChild(line); el.scrollTop = el.scrollHeight;
+}
+function num(v) {
+  if (v === null || v === undefined) return null;
+  const s = String(v).replace(/,/g, "").replace(/%/g, "").trim();
+  if (["", "-", "--", "N/A", "X"].includes(s)) return null;
+  const x = Number(s); return Number.isFinite(x) ? x : null;
+}
+function pick(row, keys, contains = []) {
+  for (const k of keys) if (row[k] !== undefined && row[k] !== null && row[k] !== "") return row[k];
+  for (const sub of contains) for (const k in row) if (k.includes(sub) && row[k] !== "" && row[k] !== null) return row[k];
+  return null;
+}
+function rocToDate(s) {
+  if (!s) return null;
+  s = String(s).replace(/[＊*]/g, "").trim();
+  let m = s.match(/^(\d{2,3})[\/年.\-]?(\d{1,2})[\/月.\-]?(\d{1,2})日?$/);
+  if (m && Number(m[1]) < 1000) return new Date(Number(m[1]) + 1911, Number(m[2]) - 1, Number(m[3]));
+  m = s.match(/^(\d{4})[\/.\-]?(\d{1,2})[\/.\-]?(\d{1,2})$/);
+  if (m) return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+  return null;
+}
+function rocYm(s) {
+  s = String(s || "").replace(/\D/g, "");
+  if (s.length === 5 || s.length === 4) { let y = Number(s.slice(0, -2)); const mo = Number(s.slice(-2)); if (y < 1000) y += 1911; if (mo >= 1 && mo <= 12) return `${y}-${p2(mo)}`; }
+  if (s.length === 6) return `${s.slice(0, 4)}-${s.slice(4)}`;
+  return null;
+}
+async function getJSON(url) {
+  const r = await fetch(url, { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  return r.json();
+}
+function tables(j) {
+  const out = [];
+  if (j && typeof j === "object") {
+    if (j.fields && j.data) out.push([j.fields, j.data]);
+    for (const t of j.tables || []) if (t && t.fields && t.data) out.push([t.fields, t.data]);
+    if (j.aaData) out.push([j.fields || [], j.aaData]);
+    for (let i = 1; i <= 12; i++) if (j["fields" + i] && j["data" + i]) out.push([j["fields" + i], j["data" + i]]);
+  }
+  return out;
+}
+function idx(fields, subs, nth = 0, exclude = []) {
+  const hits = fields.map((f, i) => [String(f), i]).filter(([f]) => subs.every(s => f.includes(s)) && !exclude.some(x => f.includes(x))).map(x => x[1]);
+  return hits.length > nth ? hits[nth] : null;
+}
+function recentWeekdays(n) { const out = []; const d = new Date(); while (out.length < n) { if (d.getDay() % 6) out.push(new Date(d)); d.setDate(d.getDate() - 1); } return out; }
+
+// ---------- 追蹤代號 ----------
+function codes() { return [...new Set(($("codes").value.toUpperCase().match(/\d{4,6}[A-Z]?/g) || []))]; }
+function updateCodesInfo() {
+  const c = codes(); const L = c.filter(x => MKT[x] === "L").length, O = c.filter(x => MKT[x] === "O").length;
+  $("codesInfo").textContent = c.length ? `${c.length} 檔（上市 ${L}、上櫃 ${O}${c.length - L - O ? "、代號表查不到 " + (c.length - L - O) : ""}）` : "";
+}
+
+// ---------- 狀態 ----------
+let snap = null;                                   // 今天的快照
+let hist = { pe: {}, rev: {}, px: {}, chips: {}, tdcc: {}, vol: {} };   // 本次補抓的歷史
+function append(kind, code, row) {
+  const lst = hist[kind][code] || (hist[kind][code] = []);
+  const i = lst.findIndex(r => r[0] === row[0]);
+  if (i >= 0) lst[i] = row; else lst.push(row);
+  lst.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+  if (lst.length > LIMIT[kind]) lst.splice(0, lst.length - LIMIT[kind]);
+}
+function refreshStat() {
+  const s = snap || {};
+  const cnt = o => Object.keys(o || {}).length;
+  const hc = k => Object.values(hist[k] || {}).reduce((a, v) => a + v.length, 0);
+  $("stat").innerHTML = `<div>本益比<br><b>${cnt(s.pe)}</b> 檔</div><div>收盤價<br><b>${cnt(s.close)}</b> 檔</div>
+    <div>月營收<br><b>${cnt(s.rev)}</b> 檔</div><div>法人籌碼<br><b>${cnt(s.chips)}</b> 檔</div>
+    <div>估值歷史<br><b>${hc("pe")}</b> 筆</div><div>股價歷史<br><b>${hc("px")}</b> 筆</div>
+    <div>月營收歷史<br><b>${hc("rev")}</b> 筆</div><div>財報<br><b>${fin ? Object.keys(fin.q || {}).length : 0}</b> 檔</div>`;
+  const has = !!snap || hc("pe") + hc("px") + hc("chips") > 0;
+  $("btnSave").disabled = !has; $("btnPush").disabled = !has;
+}
+
+// ---------- 測試連線 ----------
+async function testAll() {
+  log("開始測試各資料來源…");
+  const d = recentWeekdays(2)[1];
+  const tests = [["證交所 本益比（全部上市）", RWD_PE(d)], ["證交所 收盤行情＋指數", RWD_DAY(d)],
+    ["證交所 除權息預告", RWD_EXDIV], ["證交所 法人買賣超", T86(d)], ["證交所 融資融券", MARGIN(d)],
+    ["證交所 個股估值歷史", PE_HIST(d, "2330")], ["證交所 個股股價歷史", PX_HIST(d, "2330")], ["證交所 加權指數歷史", IDX_HIST(d)],
+    ["證交所 OpenAPI（月營收）", URLS.twse_rev], ["櫃買 OpenAPI", URLS.tpex_pe], ["櫃買 法人買賣超", TPEX_T86(d)],
+    ["集保 股權分散", TDCC]];
+  for (const [name, url] of tests) {
+    try {
+      const r = await fetch(url, { cache: "no-store" });
+      log(`✓ ${name}：可以連（HTTP ${r.status}）`, "ok");
+    } catch (e) {
+      log(`✗ ${name}：瀏覽器擋下（多半是對方沒開放網頁直接讀取，CORS）`, "bad");
+    }
+  }
+  log("✗ 的來源（通常是上櫃、月營收、集保）只能靠「請 GitHub Actions 現在抓」或電腦版 DeskNotes 抓。上市的本益比／收盤／指數／法人／融資／歷史，手機都抓得到。");
+}
+
+// ---------- 今日快照 ----------
+async function fetchToday() {
+  stopFlag = false; busy(true);
+  const s = { date: iso(new Date()), pe: {}, close: {}, chg: {}, vol: {}, rev: {}, exdiv: {}, _src: {} };
+  const src = (k, url) => { s._src[k] = { url, at: `${iso(new Date())} ${new Date().toTimeString().slice(0, 5)}` }; };
+  const errors = [];
+  async function step(key, fn) {
+    const nm = SRC_NAME[key] || key;
+    log("抓取 " + nm + "…");
+    try { fn(await getJSON(URLS[key])); src(key, URLS[key]); } catch (e) { errors.push(key); log(`  ${nm}：手機抓不到（${e.message === "Failed to fetch" ? "CORS 擋下" : e.message}）`, "warn"); }
+  }
+  // 證交所 rwd（手機可讀）：找最近一個有資料的交易日
+  for (const d of recentWeekdays(6)) {
+    if (stopFlag) break;
+    log(`抓取 證交所本益比 ${iso(d)}…`);
+    let got = 0;
+    try { for (const [f, rows] of tables(await getJSON(RWD_PE(d)))) {
+      const ic = idx(f, ["代號"]), ip = idx(f, ["本益比"]), iy = idx(f, ["殖利率"]), ib = idx(f, ["淨值比"]), ix = idx(f, ["收盤"]);
+      if (ic === null || ip === null) continue;
+      for (const r of rows) { const c = String(r[ic]).trim(); got++;
+        s.pe[c] = { pe: num(r[ip]), yield: iy !== null ? num(r[iy]) : null, pb: ib !== null ? num(r[ib]) : null };
+        if (ix !== null && num(r[ix])) s.close[c] = num(r[ix]); }
+    } } catch (e) { log("  失敗：" + e.message, "bad"); }
+    if (got) { s.date = iso(d); src("twse_pe", RWD_PE(d)); break; }
+  }
+  for (const d of recentWeekdays(6)) {
+    if (stopFlag) break;
+    log(`抓取 證交所收盤行情＋加權指數 ${iso(d)}…`);
+    let got = 0;
+    try { for (const [f, rows] of tables(await getJSON(RWD_DAY(d)))) {
+      const ii = idx(f, ["指數"], 0, ["代號"]), iv = idx(f, ["收盤指數"]);
+      if (ii !== null && iv !== null) { for (const r of rows) { const n = String(r[ii]); if (n.includes("發行量加權股價指數") && !n.includes("報酬")) { const v = num(r[iv]); if (v) { s.index = v; got++; } } } continue; }
+      const ic = idx(f, ["證券代號"]), ix = idx(f, ["收盤價"]), isg = idx(f, ["漲跌(+/-)"]), idf = idx(f, ["漲跌價差"]), ivo = idx(f, ["成交股數"]);
+      if (ic === null || ix === null) continue;
+      for (const r of rows) { const v = num(r[ix]); if (!v) continue; const c = String(r[ic]).trim(); s.close[c] = v; got++;
+        if (ivo !== null && num(r[ivo]) !== null) s.vol[c] = Math.round(num(r[ivo]) / 1000);
+        if (idf !== null) { const d = num(r[idf]); const sg = isg !== null ? String(r[isg]).replace(/<[^>]*>/g, "") : "";
+          if (d !== null) s.chg[c] = sg.includes("-") ? -d : d; } }
+    } } catch (e) { log("  失敗：" + e.message, "bad"); }
+    if (got) { if (!Object.keys(s.pe).length) s.date = iso(d); src("twse_close", RWD_DAY(d)); src("twse_index", RWD_DAY(d)); break; }
+  }
+  log("抓取 證交所除權息預告…");
+  try { for (const [f, rows] of tables(await getJSON(RWD_EXDIV))) {
+    const id = idx(f, ["日期"]), ic = idx(f, ["代號"]), ik = idx(f, ["除權息"], 0, ["日期"]), ica = idx(f, ["現金股利"]), ist = idx(f, ["無償配股"]);
+    if (id === null || ic === null) continue;
+    for (const r of rows) { const d = rocToDate(String(r[id]).replace(/[年月]/g, "/").replace("日", "")); if (!d) continue;
+      let kind = ik !== null ? String(r[ik]).trim() : ""; if (["息", "權", "權息"].includes(kind)) kind = "除" + kind;
+      (s.exdiv[String(r[ic]).trim()] ||= []).push({ date: iso(d), kind: kind || "除權息", cash: ica !== null ? num(r[ica]) : null, stock: ist !== null ? num(r[ist]) : null }); }
+  } } catch (e) { log("  失敗：" + e.message, "bad"); }
+  // 以下 OpenAPI 手機多半被擋（CORS）；抓得到就補上，抓不到不影響
+  if (!Object.keys(s.pe).length) await step("twse_pe", rows => { for (const r of rows) { const c = pick(r, ["Code"], ["代號"]); if (!c) continue;
+    s.pe[String(c).trim()] = { pe: num(pick(r, ["PEratio"], ["本益比"])), yield: num(pick(r, ["DividendYield"], ["殖利率"])), pb: num(pick(r, ["PBratio"], ["淨值比"])) };
+    const d = rocToDate(pick(r, ["Date"], ["日期"])); if (d) s.date = iso(d); } });
+  await step("tpex_pe", rows => { for (const r of rows) { const c = pick(r, ["SecuritiesCompanyCode", "Code"], ["代號"]); if (!c) continue;
+    s.pe[String(c).trim()] = { pe: num(pick(r, ["PriceEarningRatio"], ["本益比", "EarningRatio"])), yield: num(pick(r, ["YieldRatio"], ["殖利率", "Yield"])), pb: num(pick(r, ["PriceBookRatio"], ["淨值比", "BookRatio"])) }; } });
+  if (!Object.keys(s.close).length) await step("twse_close", rows => { for (const r of rows) { const c = pick(r, ["Code"], ["代號"]), p = num(pick(r, ["ClosingPrice"], ["收盤"])); if (c && p) { s.close[String(c).trim()] = p; const d = num(pick(r, ["Change"], ["漲跌"])); if (d !== null) s.chg[String(c).trim()] = d;
+    const vo = num(pick(r, ["TradeVolume"], ["成交股數"])); if (vo !== null) s.vol[String(c).trim()] = Math.round(vo / 1000); } } });
+  await step("tpex_close", rows => { for (const r of rows) { const c = pick(r, ["SecuritiesCompanyCode", "Code"], ["代號"]), p = num(pick(r, ["Close", "ClosingPrice"], ["收盤"])); if (c && p) { s.close[String(c).trim()] = p; const d = num(pick(r, ["Change"], ["漲跌"])); if (d !== null) s.chg[String(c).trim()] = d;
+    const vo = num(pick(r, ["TradingShares", "TradeVolume"], ["成交股數"])); if (vo !== null) s.vol[String(c).trim()] = Math.round(vo / 1000); } } });
+  if (!s.index) await step("twse_index", rows => { for (const r of rows) { const n = String(pick(r, ["指數", "Index"], ["指數"]) || "");
+    if (n.includes("發行量加權股價指數") && !n.includes("報酬")) { const v = num(pick(r, ["收盤指數", "CloseIndex"], ["收盤"])); if (v) s.index = v; break; } } });
+  const rev = rows => { for (const r of rows) { const c = pick(r, ["公司代號"], ["代號"]); if (!c) continue;
+    s.rev[String(c).trim()] = { ym: rocYm(pick(r, ["資料年月"], ["年月"])), rev: num(pick(r, ["營業收入-當月營收"], ["當月營收"])),
+      prev: num(pick(r, ["營業收入-上月營收"], ["上月營收"])), last_year: num(pick(r, ["營業收入-去年當月營收"], ["去年當月營收"])),
+      mom: num(pick(r, ["營業收入-上月比較增減(%)"], ["上月比較增減"])), yoy: num(pick(r, ["營業收入-去年同月增減(%)"], ["去年同月增減"])),
+      cum_yoy: num(pick(r, ["累計營業收入-前期比較增減(%)"], ["前期比較增減"])) }; } };
+  await step("twse_rev", rev);
+  await step("tpex_rev", rev);
+  const exdiv = rows => { for (const r of rows) { const c = pick(r, ["Code", "SecuritiesCompanyCode"], ["代號"]);
+    const d = rocToDate(pick(r, ["Date", "ExRightsExDividendDate"], ["日期", "Date"])); if (!c || !d) continue;
+    let kind = String(pick(r, ["Exdividend", "ExRightsExDividend"], ["權/息", "除權息", "Ex"]) || "").trim();
+    if (["息", "權", "權息"].includes(kind)) kind = "除" + kind;
+    (s.exdiv[String(c).trim()] ||= []).push({ date: iso(d), kind: kind || "除權息",
+      cash: num(pick(r, ["CashDividend"], ["現金股利", "現金"])), stock: num(pick(r, ["StockDividendRatio"], ["無償配股", "股票股利"])) }); } };
+  if (!Object.keys(s.exdiv).length) await step("twse_exdiv", exdiv);
+  await step("tpex_exdiv", exdiv);
+  if ($("optChips").checked && !stopFlag) {
+    for (const d of recentWeekdays(6)) {
+      log(`抓取 法人籌碼 ${iso(d)}…`);
+      const ch = await chipsDay(d);
+      if (Object.keys(ch).length) { s.chips = ch; s.chips_date = iso(d); src("chips", T86(d)); break; }
+    }
+    if (!s.chips) log("  法人籌碼：近幾天都抓不到", "warn");
+    try { log("抓取 集保大戶…"); s.tdcc = await fetchTdcc(); } catch (e) { log("  集保失敗：" + e.message, "bad"); }
+  }
+  // 籌碼／集保只留追蹤代號（全市場太大）
+  const tr = new Set(codes());
+  if (tr.size) { for (const k of ["chips", "tdcc"]) if (s[k]) s[k] = Object.fromEntries(Object.entries(s[k]).filter(([c]) => tr.has(c))); }
+  const n = k => Object.keys(s[k] || {}).length;
+  if (!n("pe") && !n("close") && !n("rev") && !n("chips") && !s.index) {
+    log("全部來源都抓不到。可以改用「請 GitHub Actions 現在抓」。", "bad");
+  } else {
+    snap = s;
+    log(`完成：本益比 ${n("pe")}、收盤 ${n("close")}、營收 ${n("rev")}、法人籌碼 ${n("chips")} 檔${s.index ? "、加權指數 " + s.index : ""}`, "ok");
+    if (errors.length) log(`手機抓不到（電腦版或 GitHub Actions 補）：${errors.map(e => SRC_NAME[e] || e).join("、")}`, "warn");
+    log("接著按「💾 存檔」存到 Google 雲端硬碟（同步到電腦 D:\\desknots backup\\file，DeskNotes 自動讀取）。", "ok");
+  }
+  busy(false); refreshStat();
+}
+
+async function chipsDay(d) {
+  const out = {};
+  const put = (code, key, v) => { if (v === null) return; (out[code] ||= {})[key] = Math.round(v / 100) / 10; };
+  try {
+    for (const [f, rows] of tables(await getJSON(T86(d)))) {
+      const ic = idx(f, ["代號"]), ifo = idx(f, ["外", "買賣超"]), itr = idx(f, ["投信", "買賣超"]), ide = idx(f, ["自營商", "買賣超"], 0, ["外"]);
+      if (ic === null) continue;
+      for (const r of rows) { const c = String(r[ic]).trim(); put(c, "foreign", ifo !== null ? num(r[ifo]) : null); put(c, "trust", itr !== null ? num(r[itr]) : null); put(c, "dealer", ide !== null ? num(r[ide]) : null); }
+    }
+  } catch (e) { }
+  try {
+    for (const [f, rows] of tables(await getJSON(TPEX_T86(d)))) {
+      if (!f.length) continue;
+      const ic = idx(f, ["代號"]), ifo = idx(f, ["外", "買賣超"]), itr = idx(f, ["投信", "買賣超"]), ide = idx(f, ["自營", "買賣超"], 0, ["外"]);
+      if (ic === null) continue;
+      for (const r of rows) { const c = String(r[ic]).trim(); put(c, "foreign", ifo !== null ? num(r[ifo]) : null); put(c, "trust", itr !== null ? num(r[itr]) : null); put(c, "dealer", ide !== null ? num(r[ide]) : null); }
+    }
+  } catch (e) { }
+  try {
+    for (const [f, rows] of tables(await getJSON(MARGIN(d)))) {
+      const ic = idx(f, ["代號"]), ib = idx(f, ["今日餘額"], 0), is = idx(f, ["今日餘額"], 1);
+      if (ic === null || ib === null) continue;
+      for (const r of rows) { const c = String(r[ic]).trim(); const o = (out[c] ||= {}); o.margin = num(r[ib]); if (is !== null) o.short = num(r[is]); }
+    }
+  } catch (e) { }
+  return out;
+}
+
+async function fetchTdcc() {
+  const r = await fetch(TDCC, { cache: "no-store" });
+  if (!r.ok) throw new Error("HTTP " + r.status);
+  const txt = (await r.text()).replace(/^﻿/, "");
+  const out = {};
+  for (const line of txt.split(/\r?\n/)) {
+    const c = line.split(","); if (c.length < 6) continue;
+    const lvl = Number(c[2]); if (!Number.isInteger(lvl)) continue;
+    const code = c[1].trim(), d = rocToDate(c[0].trim());
+    const o = out[code] ||= { date: d ? iso(d) : c[0].trim(), big1000: 0, big400: 0, holders: null };
+    const pct = num(c[5]) || 0;
+    if (lvl === 15) o.big1000 += pct;
+    if (lvl >= 12 && lvl <= 15) o.big400 += pct;
+    if (lvl === 17) o.holders = num(c[3]);
+  }
+  return out;
+}
+
+// ---------- 補抓歷史 ----------
+function monthsBack(n) { const out = []; const d = new Date(); d.setDate(1); for (let i = 0; i < n; i++) { out.push(new Date(d)); d.setMonth(d.getMonth() - 1); } return out; }
+
+async function backfill(only) {
+  const cs = Array.isArray(only) ? only : codes();
+  if (!cs.length) { log("先在上面填代號", "warn"); return; }
+  stopFlag = false; busy(true);
+  const wait = Number(new URLSearchParams(location.search).get("wait") || 2500);
+  const listed = cs.filter(c => MKT[c] === "L");
+  const total = listed.length * 24 + cs.length * 13 + 13 + 20;
+  let n = 0;
+  const tick = t => log(`(${++n}/${total}) ${t}`);
+  try {
+    for (const c of listed) for (const d of monthsBack(24)) {
+      if (stopFlag) throw new Error("stop");
+      tick(`估值 ${c} ${iso(d).slice(0, 7)}`);
+      try { for (const [f, rows] of tables(await getJSON(PE_HIST(d, c)))) {
+        const id = idx(f, ["日期"]), ip = idx(f, ["本益比"]), iy = idx(f, ["殖利率"]), ib = idx(f, ["淨值比"]);
+        for (const r of rows) { const dd = rocToDate(r[id]); if (dd) append("pe", c, [iso(dd), ip !== null ? num(r[ip]) : null, iy !== null ? num(r[iy]) : null, ib !== null ? num(r[ib]) : null]); } } }
+      catch (e) { log("  失敗：" + e.message, "bad"); }
+      await sleep(wait);
+    }
+    for (const c of [...cs, INDEX_KEY]) {
+      const m = c === INDEX_KEY ? "I" : MKT[c];
+      if (!m) continue;
+      for (const d of monthsBack(13)) {
+        if (stopFlag) throw new Error("stop");
+        tick(`股價 ${c} ${iso(d).slice(0, 7)}`);
+        try {
+          const url = m === "I" ? IDX_HIST(d) : m === "L" ? PX_HIST(d, c) : TPEX_PX(d, c);
+          const key = m === "I" ? "加權股價指數" : m === "L" ? "收盤價" : "收盤";
+          let j;
+          try { j = await getJSON(url); } catch (e) { if (m !== "I") throw e; j = await getJSON(IDX_HIST2(d)); }
+          for (const [f, rows] of tables(j)) {
+            const id = f.length ? idx(f, ["日期"]) : 0, ic = f.length ? (idx(f, [key]) ?? idx(f, ["收盤指數"])) : 6;
+            const iv = m === "I" ? null : f.length ? (idx(f, ["成交股數"]) ?? idx(f, ["仟股"])) : 1, ivk = f.length && idx(f, ["成交股數"]) !== null ? 1000 : 1;
+            if (id === null || ic === null) continue;
+            for (const r of rows) { const dd = rocToDate(r[id]); const v = num(r[ic]); if (dd && v) append("px", c, [iso(dd), v]);
+              if (dd && iv !== null && num(r[iv]) !== null) append("vol", c, [iso(dd), Math.round(num(r[iv]) / ivk)]); }
+          }
+        } catch (e) { log("  失敗：" + e.message, "bad"); }
+        await sleep(wait);
+      }
+    }
+    const tr = new Set(cs);
+    let got = 0;
+    for (const d of recentWeekdays(30)) {
+      if (stopFlag) throw new Error("stop");
+      if (got >= 20) break;
+      tick(`籌碼 ${iso(d)}`);
+      const ch = await chipsDay(d);
+      if (Object.keys(ch).length) { got++; for (const [c, v] of Object.entries(ch)) if (tr.has(c)) append("chips", c, [iso(d), v.foreign ?? null, v.trust ?? null, v.dealer ?? null, v.margin ?? null, v.short ?? null]); }
+      await sleep(wait);
+    }
+    log("補抓完成", "ok");
+  } catch (e) {
+    log(e.message === "stop" ? "已停止（已抓到的資料仍可存檔）" : "補抓中斷：" + e.message, "warn");
+  }
+  busy(false); refreshStat();
+}
+
+// ---------- 輸出 ----------
+let fin = null;                                    // GitHub 抓的財報（只留追蹤代號）
+let etf = null;                                    // GitHub 抓的 ETF 成分股
+function bundle() {
+  return { format: "desknotes-market-v1", created: new Date().toISOString(), codes: codes(), market: snap, history: hist, fin, etf };
+}
+
+// ---------- 🚀 一次抓全部 ----------
+function mergeSnap(base, add) {                    // add（手機，較新）蓋 base（GitHub）；上櫃、營收等手機沒有的保留
+  if (!base) return add; if (!add) return base;
+  const out = Object.assign({}, base);
+  const newer = (add.date || "") >= (base.date || "");
+  for (const [k, v] of Object.entries(add)) {
+    if (v && typeof v === "object" && !Array.isArray(v)) { if (Object.keys(v).length) out[k] = newer ? Object.assign({}, base[k] || {}, v) : Object.assign({}, v, base[k] || {}); }
+    else if (v !== null && v !== undefined && v !== "" && (newer || !(k in base))) out[k] = v;
+  }
+  return out;
+}
+async function waitWorkflow(g, since, maxMin = 50) {
+  const url = `https://api.github.com/repos/${g.owner}/${g.repo}/actions/workflows/tw-market.yml/runs?per_page=5&branch=${g.branch}`;
+  const t0 = Date.now(); let id = null, last = "";
+  while (Date.now() - t0 < maxMin * 60000) {
+    if (stopFlag) throw new Error("stop");
+    try {
+      const r = await fetch(url, { headers: ghHeaders(g), cache: "no-store" });
+      if (r.ok) {
+        const runs = (await r.json()).workflow_runs || [];
+        const run = id ? runs.find(x => x.id === id) : runs.find(x => new Date(x.created_at).getTime() >= since - 60000);
+        if (run) {
+          id = run.id;
+          const st = `${run.status}${run.conclusion ? "／" + run.conclusion : ""}`;
+          if (st !== last) { log(`GitHub Actions：${st}（${Math.round((Date.now() - t0) / 60000)} 分）`); last = st; }
+          if (run.status === "completed") return run.conclusion;
+        }
+      }
+    } catch (e) { }
+    await sleep(20000);
+  }
+  throw new Error("等太久了，GitHub 可能還在跑；之後按「一次抓全部」或 DeskNotes 讀 GitHub 也行");
+}
+async function fetchAll() {
+  stopFlag = false;
+  const cs = codes();
+  if (!cs.length) { log("先填代號（可按「📂 讀代號檔」）", "warn"); return; }
+  log(`=== 一次抓全部：${cs.length} 檔 ===`, "ok");
+  await fetchToday();
+  if (stopFlag) return;
+  let g = null; try { g = gh(); } catch (e) { }
+  busy(true);
+  try {
+    if (g) {
+      const since = Date.now();
+      log("把代號與今日資料交給 GitHub…");
+      busy(false); await push(); busy(true);
+      const r = await fetch(`https://api.github.com/repos/${g.owner}/${g.repo}/actions/workflows/tw-market.yml/dispatches`,
+        { method: "POST", headers: ghHeaders(g), body: JSON.stringify({ ref: g.branch }) });
+      if (r.status !== 204) throw new Error(`請 GitHub 開始抓失敗 HTTP ${r.status}：${(await r.text()).slice(0, 120)}`);
+      log("GitHub Actions 開始抓（歷史、財報、月營收、上櫃），約 5～45 分鐘，螢幕可以關，回來再看。");
+      const concl = await waitWorkflow(g, since);
+      log(`GitHub Actions 結束：${concl}`, concl === "success" ? "ok" : "warn");
+      const tr = new Set(cs);
+      const pick = o => { const out = {}; for (const [c, v] of Object.entries(o || {})) if (tr.has(c) || c === INDEX_KEY) out[c] = v; return out; };
+      log("下載 GitHub 的結果…");
+      const m = await ghGet(g, `${g.dir}/market.json`);
+      const h = await ghGet(g, `${g.dir}/history.json`);
+      const f = await ghGet(g, `${g.dir}/fin.json`);
+      if (m.json) snap = mergeSnap(m.json, snap);
+      if (h.json) { const hh = {}; for (const k of Object.keys(LIMIT)) hh[k] = pick(h.json[k]); hist = mergeHist(hh, hist);
+        if ((h.json.backfill_left || []).length) log(`歷史還在分批補：剩 ${h.json.backfill_left.length} 檔，下次 GitHub 執行會繼續`, "warn"); }
+      if (f.json) { fin = { q: pick(f.json.q), bs: pick(f.json.bs), div: pick(f.json.div), div_updated: f.json.div_updated, updated: f.json.updated, label: "GitHub Actions" };
+        log(`財報：${Object.keys(fin.q).length} 檔（三率、EPS）、資產負債 ${Object.keys(fin.bs).length} 檔`, "ok"); }
+      else log("GitHub 上還沒有 fin.json（請確認 tw_market_data.py 已更新到新版）", "warn");
+      try { const e = await ghGet(g, `${g.dir}/etf.json`); if (e.json) { etf = e.json; log(`ETF 成分股：${Object.keys(etf.funds || {}).length} 檔 ETF`, "ok"); } } catch (e) { }
+    } else {
+      log("沒有 GitHub 設定：只補手機抓得到的歷史（上市），已補過的代號跳過。財報、月營收、上櫃要 GitHub 或電腦版。", "warn");
+      let done = {}; try { done = JSON.parse(localStorage.getItem("tw_backfilled") || "{}"); } catch (e) { }
+      const need = cs.filter(c => !done[c] || (Date.now() - done[c]) > 25 * 864e5);
+      if (need.length) {
+        log(`要補歷史的代號 ${need.length} 檔（每檔約 1.5 分鐘）`);
+        busy(false); await backfill(need); busy(true);
+        if (!stopFlag) { for (const c of need) done[c] = Date.now(); try { localStorage.setItem("tw_backfilled", JSON.stringify(done)); } catch (e) { } }
+      } else log("歷史都補過了（25 天內）");
+    }
+    log("=== 完成，存檔中… ===", "ok");
+    busy(false);
+    await saveFile(true);
+  } catch (e) {
+    log(e.message === "stop" ? "已停止（已抓到的仍可存檔）" : e.message, e.message === "stop" ? "warn" : "bad");
+  }
+  busy(false);
+}
+async function saveFile(auto) {
+  const name = `desknotes_market_${ymd(new Date())}_${new Date().toTimeString().slice(0, 5).replace(":", "")}.json`;
+  const blob = new Blob([JSON.stringify(bundle())], { type: "application/json" });
+  const file = new File([blob], name, { type: "application/json" });
+  if (navigator.canShare && navigator.canShare({ files: [file] })) {
+    try { await navigator.share({ files: [file], title: name }); log("已分享 " + name + "（選雲端硬碟 → desknots backup/file）", "ok"); return; }
+    catch (e) { if (e.name === "AbortError") return; if (auto) { log("請按「💾 存檔／分享」存到雲端硬碟", "warn"); $("btnSave").focus(); return; } }
+  }
+  const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click();
+  setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+  log("已下載 " + name, "ok");
+}
+
+// ---------- GitHub ----------
+function gh() {
+  const g = { owner: $("ghOwner").value.trim(), repo: $("ghRepo").value.trim(), branch: $("ghBranch").value.trim() || "main",
+    dir: ($("ghDir").value.trim() || "data").replace(/^\/|\/$/g, ""), token: $("ghToken").value.trim() };
+  if (!g.owner || !g.repo || !g.token) throw new Error("請先在「GitHub 設定」填帳號、repository、token");
+  return g;
+}
+const ghHeaders = g => ({ Authorization: "Bearer " + g.token, Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" });
+function b64(str) { const bytes = new TextEncoder().encode(str); let bin = ""; for (let i = 0; i < bytes.length; i += 0x8000) bin += String.fromCharCode(...bytes.subarray(i, i + 0x8000)); return btoa(bin); }
+async function ghGet(g, path) {
+  const r = await fetch(`https://api.github.com/repos/${g.owner}/${g.repo}/contents/${path}?ref=${g.branch}`, { headers: ghHeaders(g), cache: "no-store" });
+  if (r.status === 404) return { sha: null, json: null };
+  if (!r.ok) throw new Error(`讀 ${path} 失敗 HTTP ${r.status}`);
+  const meta = await r.json();
+  let txt = null;
+  if (meta.content) { const bin = atob(meta.content.replace(/\n/g, "")); txt = new TextDecoder().decode(Uint8Array.from(bin, ch => ch.charCodeAt(0))); }
+  else if (meta.download_url) txt = await (await fetch(meta.download_url, { cache: "no-store" })).text();
+  let json = null; try { json = txt ? JSON.parse(txt) : null; } catch (e) { }
+  return { sha: meta.sha, json, txt };
+}
+async function ghPut(g, path, text, sha, msg) {
+  const body = { message: msg, content: b64(text), branch: g.branch }; if (sha) body.sha = sha;
+  const r = await fetch(`https://api.github.com/repos/${g.owner}/${g.repo}/contents/${path}`, { method: "PUT", headers: ghHeaders(g), body: JSON.stringify(body) });
+  if (!r.ok) throw new Error(`寫 ${path} 失敗 HTTP ${r.status}：${(await r.text()).slice(0, 120)}`);
+}
+function mergeHist(base, add) {
+  base = base || {}; for (const k of Object.keys(LIMIT)) base[k] ||= {};
+  for (const k of Object.keys(LIMIT)) for (const [c, rows] of Object.entries(add[k] || {})) {
+    const lst = base[k][c] || (base[k][c] = []); const have = new Map(lst.map((r, i) => [r[0], i]));
+    for (const r of rows) { if (have.has(r[0])) lst[have.get(r[0])] = r; else lst.push(r); }
+    lst.sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0); if (lst.length > LIMIT[k]) lst.splice(0, lst.length - LIMIT[k]);
+  }
+  return base;
+}
+function snapToHist(s, track) {
+  const h = { pe: {}, rev: {}, px: {}, chips: {}, tdcc: {} }; if (!s) return h;
+  const want = c => !track.size || track.has(c); const d = s.date;
+  for (const [c, v] of Object.entries(s.pe || {})) if (want(c) && (v.pe || v.pb)) h.pe[c] = [[d, v.pe, v.yield, v.pb]];
+  for (const [c, v] of Object.entries(s.rev || {})) if (want(c) && v.ym && v.rev !== null) h.rev[c] = [[v.ym, v.rev, v.yoy, v.mom]];
+  for (const [c, v] of Object.entries(s.close || {})) if (want(c)) h.px[c] = [[d, v]];
+  if (s.index) h.px[INDEX_KEY] = [[d, s.index]];
+  for (const [c, v] of Object.entries(s.chips || {})) if (want(c) && s.chips_date) h.chips[c] = [[s.chips_date, v.foreign ?? null, v.trust ?? null, v.dealer ?? null, v.margin ?? null, v.short ?? null]];
+  for (const [c, v] of Object.entries(s.tdcc || {})) if (want(c) && v.date) h.tdcc[c] = [[v.date, v.big1000, v.big400, v.holders]];
+  return h;
+}
+async function push() {
+  busy(true);
+  try {
+    const g = gh(); const track = new Set(codes());
+    log("讀取 GitHub 上的 history.json…");
+    const h = await ghGet(g, `${g.dir}/history.json`);
+    let merged = mergeHist(h.json || {}, hist);
+    merged = mergeHist(merged, snapToHist(snap, track));
+    log("寫入 history.json…");
+    await ghPut(g, `${g.dir}/history.json`, JSON.stringify(merged), h.sha, "手機補資料 " + iso(new Date()));
+    if (snap) {
+      const m = await ghGet(g, `${g.dir}/market.json`);
+      const out = Object.assign({}, mergeSnap(m.json, snap), { fetched: new Date().toLocaleString("sv-SE").slice(0, 16) });
+      const old = (m.json && m.json.exdiv) || {}; const today = iso(new Date());
+      const ex = {}; for (const [c, v] of Object.entries(old)) { const k = v.filter(i => i.date >= today); if (k.length) ex[c] = k; }
+      for (const [c, v] of Object.entries(snap.exdiv || {})) { const cur = ex[c] ||= []; for (const it of v) if (!cur.some(x => x.date === it.date && x.kind === it.kind)) cur.push(it); }
+      out.exdiv = ex;
+      log("寫入 market.json…");
+      await ghPut(g, `${g.dir}/market.json`, JSON.stringify(out), m.sha, "手機抓資料 " + iso(new Date()));
+    }
+    if (track.size) {
+      const c = await ghGet(g, "codes.txt");
+      const old = new Set(((c.txt || "").match(/\d{4,6}[A-Z]?/g)) || []);
+      const all = [...new Set([...old, ...track])].sort();
+      if (all.length !== old.size) { log("更新 codes.txt…"); await ghPut(g, "codes.txt", all.join("\n") + "\n", c.sha, "更新追蹤代號"); }
+    }
+    log("完成。DeskNotes「🗄 工具2 → 🔄 只用 GitHub 轉存更新」就會讀到。", "ok");
+  } catch (e) { log(e.message, "bad"); }
+  busy(false);
+}
+async function dispatch() {
+  busy(true);
+  try {
+    const g = gh();
+    const r = await fetch(`https://api.github.com/repos/${g.owner}/${g.repo}/actions/workflows/tw-market.yml/dispatches`,
+      { method: "POST", headers: ghHeaders(g), body: JSON.stringify({ ref: g.branch }) });
+    if (r.status === 204) log("已請 GitHub Actions 開始抓，約 2～10 分鐘後完成（補抓歷史會更久）。", "ok");
+    else log(`失敗 HTTP ${r.status}：${(await r.text()).slice(0, 160)}`, "bad");
+  } catch (e) { log(e.message, "bad"); }
+  busy(false);
+}
+
+// ---------- 介面 ----------
+function busy(on) {
+  for (const id of ["btnAll", "btnTest", "btnToday", "btnHist", "btnPush", "btnDispatch"]) $(id).disabled = on;
+  $("btnStop").disabled = !on;
+  if (!on) refreshStat();
+}
+const KEEP = ["codes", "ghOwner", "ghRepo", "ghBranch", "ghDir", "ghToken"];
+for (const k of KEEP) {
+  try { const v = localStorage.getItem("tw_" + k); if (v !== null) $(k).value = v; } catch (e) { }
+  $(k).addEventListener("input", () => { try { localStorage.setItem("tw_" + k, $(k).value); } catch (e) { } if (k === "codes") updateCodesInfo(); });
+}
+$("btnTest").onclick = testAll;
+$("btnAll").onclick = fetchAll;
+$("btnCodesFile").onclick = () => $("codesFile").click();
+$("codesFile").onchange = async e => {
+  const f = e.target.files[0]; if (!f) return;
+  const txt = await f.text(); const cs = [...new Set((txt.toUpperCase().match(/\d{4,6}[A-Z]?/g) || []))];
+  $("codes").value = cs.join(" "); try { localStorage.setItem("tw_codes", $("codes").value); } catch (e2) { }
+  updateCodesInfo(); log(`讀入 ${cs.length} 個代號（${f.name}）`, "ok"); e.target.value = "";
+};
+$("btnToday").onclick = fetchToday;
+$("btnHist").onclick = backfill;
+$("btnStop").onclick = () => { stopFlag = true; log("停止中…", "warn"); };
+$("btnSave").onclick = saveFile;
+$("btnPush").onclick = push;
+$("btnDispatch").onclick = dispatch;
+updateCodesInfo(); refreshStat();
+log("就緒。第一次用請先按「🩺 測試連線」。");
+</script>
+</body>
+</html>
