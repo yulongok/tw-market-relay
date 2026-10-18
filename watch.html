@@ -295,20 +295,49 @@ async function liveTwseClose(){
   }
   throw new Error("找不到最近的收盤行情");
 }
+// 收盤後備援：櫃買每日收盤（上櫃）；新舊兩種網址都試
+async function liveTpexClose(){
+  for(let k = 0; k < 7; k++){
+    const d = new Date(); d.setDate(d.getDate() - k);
+    if(d.getDay() === 0 || d.getDay() === 6) continue;
+    const ad = `${d.getFullYear()}/${p2(d.getMonth() + 1)}/${p2(d.getDate())}`, rd = `${d.getFullYear() - 1911}/${p2(d.getMonth() + 1)}/${p2(d.getDate())}`;
+    let rows = null, ic = 0, ip = 2, is = 3;
+    try{
+      const j = await fetchX(`https://www.tpex.org.tw/www/zh-tw/afterTrading/dailyQuotes?date=${ad}&id=&response=json`, 20000);
+      const t = (j.tables || [])[0] || {}, f = t.fields || [];
+      if((t.data || []).length){ rows = t.data; ic = Math.max(0, f.findIndex(x => x.includes("代號"))); ip = f.findIndex(x => x.includes("收盤")); is = f.findIndex(x => x.includes("漲跌")); if(ip < 0) ip = 2; if(is < 0) is = 3; }
+    }catch(e){}
+    if(!rows){
+      try{ rows = (await fetchX(`https://www.tpex.org.tw/web/stock/aftertrading/daily_close_quotes/stk_quote_result.php?l=zh-tw&d=${rd}&o=json`, 20000)).aaData; }catch(e){}
+    }
+    if(!rows || !rows.length) continue;
+    const out = {};
+    for(const r of rows){
+      const p = numx(r[ip]); if(p == null) continue;
+      const ch = numx(String(r[is]).replace(/[^0-9.+-]/g, "")) || 0;
+      out[String(r[ic]).trim()] = {price: p, chg: ch, pct: p - ch ? ch / (p - ch) * 100 : null, time: "", date: isoD(d)};
+    }
+    if(Object.keys(out).length > 300) return out;
+  }
+  throw new Error("找不到最近的櫃買收盤");
+}
 async function liveQuotes(){
   if(LIVE.mode !== "live" || !S.web) return;
   const codes = Object.keys(S.web.stocks);
-  try{
-    const r = await liveMIS(codes);
-    LIVE.q = r.q; LIVE.idx = r.idx; LIVE.qSrc = "證交所即時"; LIVE.ok.mis = true;
-  }catch(e){
-    LIVE.ok.mis = false;
-    if(!LIVE.ok.close_tried || !marketOpen()){
-      LIVE.ok.close_tried = true;
-      try{ LIVE.q = await liveTwseClose(); LIVE.qSrc = "證交所收盤"; LIVE.ok.close = true; }catch(e2){ LIVE.ok.close = false; }
-    }
+  if(LIVE.ok.mis !== false){                         // 即時報價擋過一次就不再試（省時間）
+    try{
+      const r = await liveMIS(codes);
+      LIVE.q = r.q; LIVE.idx = r.idx; LIVE.qSrc = "證交所即時"; LIVE.ok.mis = true;
+      LIVE.qAt = new Date().toTimeString().slice(0, 5);
+      return;
+    }catch(e){ LIVE.ok.mis = false; }
   }
-  LIVE.qAt = new Date().toTimeString().slice(0, 5);
+  // 收盤行情：同一份 30 分鐘內不重抓；盤中只抓一次（之前的收盤，盤中價交給 GitHub）
+  if(LIVE.closeAt && (Date.now() - LIVE.closeAt < 30 * 60000 || marketOpen())) return;
+  const q = {}, src = [];
+  try{ Object.assign(q, await liveTwseClose()); src.push("證交所"); LIVE.ok.close = true; }catch(e){ LIVE.ok.close = false; }
+  try{ Object.assign(q, await liveTpexClose()); src.push("櫃買"); LIVE.ok.otc = true; }catch(e){ LIVE.ok.otc = false; }
+  if(src.length){ LIVE.q = q; LIVE.qSrc = src.join("＋") + "收盤"; LIVE.closeAt = Date.now(); LIVE.qAt = new Date().toTimeString().slice(0, 5); }
 }
 // K 線：證交所（上市）／櫃買（上櫃）每月日成交，過去的月份存在這台裝置
 async function liveMonth(c, y, m){
@@ -371,6 +400,7 @@ async function testSources(){
   const box = $("#testOut"); box.textContent = "測試中…";
   const tests = [["證交所即時（MIS）", () => liveMIS(["2330"])],
     ["證交所每日收盤", () => liveTwseClose()],
+    ["櫃買每日收盤", () => liveTpexClose()],
     ["證交所 K 線（2330）", () => liveMonth("2330", new Date().getFullYear(), new Date().getMonth() + 1)],
     ["櫃買 K 線（6488）", () => { const s0 = S.web && S.web.stocks["6488"]; const keep = s0 && s0.mkt; if(S.web && !s0) S.web.stocks["6488"] = {mkt: "otc"};
       return liveMonth("6488", new Date().getFullYear(), new Date().getMonth() + 1).finally(() => { if(S.web && !s0) delete S.web.stocks["6488"]; else if(s0) s0.mkt = keep; }); }],
