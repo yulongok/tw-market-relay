@@ -119,6 +119,26 @@ h3{font-size:15px;margin:16px 2px 8px}
 #settings input{width:100%;margin:6px 0 10px}
 .toast{position:fixed;left:50%;bottom:calc(18px + env(safe-area-inset-bottom));transform:translateX(-50%);background:var(--panel);
   border:1px solid var(--line);border-radius:999px;padding:8px 14px;font-size:13px;box-shadow:var(--shadow);z-index:80;display:none;max-width:92vw}
+/* 資金 */
+.mf{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin-bottom:8px}
+.mf .top{display:flex;align-items:baseline;gap:10px}
+.mf .who{font-weight:700;min-width:64px}
+.mf .amt{font-size:22px;font-weight:700}
+.mf .stk{margin-left:auto;color:var(--warn);font-weight:600;font-size:13.5px}
+.mf svg{width:100%;height:46px;display:block;margin:6px 0 2px}
+.mf .sub{font-size:13px;display:flex;gap:14px}
+.kp{display:grid;grid-template-columns:repeat(3,1fr);gap:6px;margin-bottom:8px}
+.kp > div{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:7px 9px;min-width:0}
+.kp .n{font-size:12px;color:var(--muted)} .kp .v{font-size:16px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.kp small{display:block;font-size:12.5px}
+.ib{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:6px 8px}
+.ib .r{display:grid;grid-template-columns:minmax(76px,30%) 1fr auto;align-items:center;gap:6px;padding:3px 0;cursor:pointer;font-size:13.5px}
+.ib .r .nm2{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ib .trk{position:relative;height:14px}
+.ib .trk::before{content:"";position:absolute;left:50%;top:-3px;bottom:-3px;border-left:1px dashed var(--line)}
+.ib .bar2{position:absolute;top:2px;bottom:2px;border-radius:3px}
+.ib .gap{height:8px}
+.ib .det{grid-column:1/-1;font-size:12.5px;color:var(--muted);padding:0 0 4px 4px}
 @media (max-width:520px){
   .card{grid-template-columns:minmax(80px,1fr) auto;}
   .sig{grid-column:1/-1;justify-self:start;text-align:left}
@@ -140,6 +160,7 @@ h3{font-size:15px;margin:16px 2px 8px}
     <button data-v="watch" class="on">觀察股</button>
     <button data-v="cand">候選名單</button>
     <button data-v="scan">市場掃描</button>
+    <button data-v="money">資金</button>
     <button data-v="global">國際盤勢</button>
   </nav>
 </header>
@@ -184,6 +205,13 @@ h3{font-size:15px;margin:16px 2px 8px}
     </div>
   </section>
 
+  <section id="v-money" hidden>
+    <div class="bar">
+      <div class="seg" id="mTab"><button data-t="flow">法人金額</button><button data-t="ind">產業流向</button><button data-t="ex">除權息</button></div>
+    </div>
+    <div id="mBody"></div>
+  </section>
+
   <section id="v-global" hidden>
     <div id="gBody"></div>
   </section>
@@ -223,7 +251,8 @@ const S = {
   lv: {watch: {filter: LS.get("filter", "star"), sort: LS.get("sort", "list"), q: ""},
        cand: {filter: LS.get("cfilter", "all"), sort: LS.get("csort", "list"), q: ""}},
   scan: Object.assign({mode: "vol", nd: "5", by: "vol", col: null, desc: true}, LS.get("scan", {})),
-  view: LS.get("view", "watch"), cur: null, krange: LS.get("krange", 120)
+  view: LS.get("view", "watch"), cur: null, krange: LS.get("krange", 120),
+  money: Object.assign({tab: "flow", mode: "inst", who: "三大法人", nd: "1", exAll: false}, LS.get("money", {}))
 };
 const ELEC_HINT = n => `主流電子股裡「條件最像起漲」的前 ${n} 名，不保證上漲；買進請設停損`;
 
@@ -486,12 +515,13 @@ function renderIdx(){
 function setView(v){
   S.view = v; LS.set("view", v);
   document.querySelectorAll("nav button").forEach(b => b.classList.toggle("on", b.dataset.v === v));
-  ["watch", "cand", "scan", "global"].forEach(k => $("#v-" + k).hidden = k !== v);
+  ["watch", "cand", "scan", "money", "global"].forEach(k => $("#v-" + k).hidden = k !== v);
   render();
 }
 function render(soft){
   if(S.view === "watch" || S.view === "cand") renderList(S.view);
   else if(S.view === "scan") renderScan();
+  else if(S.view === "money") renderMoney();
   else renderGlobal();
   if(S.cur && $("#detail").classList.contains("show") && !soft) openDetail(S.cur, true);
 }
@@ -681,6 +711,110 @@ function drawBars(items, title){
   if(lo < 0){ g.strokeStyle = css("--muted"); g.beginPath(); g.moveTo(x0, 2); g.lineTo(x0, H - 2); g.stroke(); }
 }
 
+// ---------- 💰 資金（法人金額、產業流向、除權息；資料：web.json 的 money） ----------
+const WHO = [["foreign", "外資"], ["trust", "投信"], ["dealer", "自營商"], ["total", "三大法人"]];
+const yi = (v, d = 0) => v == null ? "—" : (v > 0 ? "▲" : v < 0 ? "▼" : "") + sgn(v, d) + " 億";
+function flowBars(arr){
+  const a = arr || [], n = a.length; if(!n) return "";
+  const mx = Math.max(...a.map(v => Math.abs(v || 0))) || 1, w = 100 / n;
+  return `<svg viewBox="0 0 100 46" preserveAspectRatio="none"><line x1="0" y1="23" x2="100" y2="23" stroke="${css("--line")}" vector-effect="non-scaling-stroke"/>` +
+    a.map((v, i) => { if(!v) return ""; const h = Math.abs(v) / mx * 21; return `<rect x="${(i * w + w * .15).toFixed(2)}" width="${(w * .7).toFixed(2)}" y="${(v > 0 ? 23 - h : 23).toFixed(2)}" height="${h.toFixed(2)}" fill="${v > 0 ? css("--up") : css("--down")}"/>`; }).join("") + "</svg>";
+}
+let mPlay = null;
+function renderMoney(){
+  const M = S.money, m = S.web && S.web.money, box = $("#mBody");
+  document.querySelectorAll("#mTab button").forEach(b => b.classList.toggle("on", b.dataset.t === M.tab));
+  if(!m){ box.innerHTML = '<div class="msg">web.json 沒有資金資料：要先上傳新版 web_export.py、tw_market_data.py 到私人 repo，GitHub 跑過一次才會有。</div>'; return; }
+  if(M.tab === "flow") return renderFlow(m, box);
+  if(M.tab === "ind") return renderInd(m, box);
+  renderEx(m, box);
+}
+function renderFlow(m, box){
+  const f = m.flow;
+  if(!f){ box.innerHTML = '<div class="msg">還沒有法人金額資料（GitHub 每天補近 30 天）。</div>'; return; }
+  box.innerHTML = `<div class="muted" style="font-size:13px;margin:0 2px 8px">${esc(f.date)} 收盤・${f.otc ? "上市＋上櫃" : "只有上市"}・近 ${f.n} 日・紅▲買超、綠▼賣超（億元）</div>` +
+    WHO.map(([k, nm]) => { const r = f.rows[k]; if(!r) return "";
+      return `<div class="mf"><div class="top"><span class="who">${nm}</span><span class="amt num ${cls(r.today)}">${yi(r.today)}</span>
+        ${r.streak ? `<span class="stk">連${r.streak > 0 ? "買" : "賣"} ${Math.abs(r.streak)} 日</span>` : ""}</div>
+        ${flowBars(r.s)}
+        <div class="sub"><span class="${cls(r.sum)}">近${f.n}日 ${yi(r.sum)}</span><span class="muted">買 ${r.buy} 天・賣 ${r.sell} 天</span></div></div>`; }).join("") +
+    '<div class="muted" style="font-size:12.5px">外資連賣 5 天以上且近 20 日賣超時，電腦版全市場篩選的盤勢會降一級。</div>';
+}
+function indBlock(rows, scale, open){
+  const mx = scale || Math.max(...rows.map(r => Math.abs(r[1]))) || 1;
+  let h = '<div class="ib"><div class="r" style="cursor:default"><span></span><span class="muted" style="text-align:center;font-size:12px"><span class="down">流出</span>　｜　<span class="up">流入</span></span><span></span></div>', prevPos = true;
+  rows.forEach(r => {
+    const [nm, a] = r, pos = a >= 0, L = Math.min(Math.abs(a) / mx, 1) * 50;
+    if(prevPos && !pos) h += '<div class="gap"></div>';
+    prevPos = pos;
+    h += `<div class="r" data-i="${esc(nm)}"><span class="nm2">${esc(nm)}</span><span class="trk"><span class="bar2" style="${pos ? `left:50%;width:${L}%` : `left:${50 - L}%;width:${L}%`};background:${pos ? css("--up") : css("--down")}"></span></span><span class="num ${cls(a)}" style="font-weight:600">${sgn(a, 2)}</span>`;
+    if(open === nm && r[3]) h += `<div class="det">${r[2]} 檔・主要：${r[3].map(([c, n, v]) => `${c} ${esc(n)} ${sgn(v, 2)}`).join("、")}</div>`;
+    h += "</div>";
+  });
+  return h + "</div>";
+}
+function renderInd(m, box){
+  const M = S.money, ind = m.ind || {};
+  const key = `${M.mode}|${M.mode === "inst" ? M.who : ""}|${M.nd}`, d = ind[key];
+  let h = `<div class="bar">
+    <div class="seg" id="mMode"><button data-x="inst" class="${M.mode === "inst" ? "on" : ""}">法人金額</button><button data-x="amount" class="${M.mode === "amount" ? "on" : ""}">成交估計</button></div>
+    ${M.mode === "inst" ? `<select id="mWho">${["三大法人", "外資", "投信", "自營商"].map(x => `<option ${x === M.who ? "selected" : ""}>${x}</option>`).join("")}</select>` : ""}
+    <div class="seg" id="mNd">${["1", "5", "20"].map(x => `<button data-n="${x}" class="${x === M.nd ? "on" : ""}">${x} 日</button>`).join("")}</div>
+    ${(m.replay || []).length ? `<button class="ibtn" id="mPlay">${mPlay ? "⏸ 停止" : "▶ 逐日重播"}</button>` : ""}</div>`;
+  let rows, title, total;
+  if(mPlay){
+    const f = m.replay[mPlay.k];
+    rows = f.rows; total = rows.reduce((a, r) => a + r[1], 0);
+    title = `${f.date}（${mPlay.k + 1}/${m.replay.length}）三大法人買賣超金額・單日`;
+  } else if(d && d.rows.length){
+    rows = d.rows; total = d.total;
+    title = `${d.date}　${M.mode === "inst" ? M.who + "買賣超金額" : "成交金額估計"}・${M.nd === "1" ? "單日" : `近 ${M.nd} 日`}${d.nd < +M.nd ? `（有資料 ${d.nd} 天）` : ""}`;
+  }
+  if(!rows){ box.innerHTML = h + '<div class="msg">沒有資料：法人金額要有全市場法人買賣超；成交估計要有全市場成交量。</div>'; bindInd(m); return; }
+  const hi = rows[0], lo = rows[rows.length - 1];
+  h += `<div class="muted" style="font-size:13px;margin:0 2px 6px">${esc(title)}</div>
+    <div class="kp"><div><div class="n">全市場合計</div><div class="v ${cls(total)}">${yi(total, 1)}</div></div>
+    <div><div class="n">吸金最多</div><div class="v">${esc(hi[0])}</div><small class="${cls(hi[1])}">${yi(hi[1], 1)}</small></div>
+    <div><div class="n">失血最多</div><div class="v">${esc(lo[0])}</div><small class="${cls(lo[1])}">${yi(lo[1], 1)}</small></div></div>` +
+    indBlock(rows, mPlay ? mPlay.scale : null, M.open) +
+    `<div class="muted" style="font-size:12.5px;margin-top:6px">${M.mode === "inst" && !mPlay ? "法人金額＝每檔法人買賣超張數 × 收盤 × 1000，依產業加總（億元）。點產業看主要貢獻股。" : mPlay ? "重播固定刻度，天與天之間可以比大小。" : "成交估計＝上漲股成交金額算流入、下跌股算流出，只是近似，不是主動買賣（外盤−內盤）。"}</div>`;
+  box.innerHTML = h; bindInd(m);
+}
+function bindInd(m){
+  const M = S.money, save = () => { LS.set("money", M); renderMoney(); };
+  document.querySelectorAll("#mMode button").forEach(b => b.onclick = () => { M.mode = b.dataset.x; save(); });
+  document.querySelectorAll("#mNd button").forEach(b => b.onclick = () => { M.nd = b.dataset.n; save(); });
+  const w = $("#mWho"); if(w) w.onchange = () => { M.who = w.value; save(); };
+  document.querySelectorAll("#mBody .r[data-i]").forEach(r => r.onclick = () => { M.open = M.open === r.dataset.i ? null : r.dataset.i; renderMoney(); });
+  const p = $("#mPlay");
+  if(p) p.onclick = () => {
+    if(mPlay){ clearInterval(mPlay.t); mPlay = null; renderMoney(); return; }
+    const fr = m.replay; if(!fr.length) return;
+    mPlay = {k: 0, scale: Math.max(...fr.flatMap(f => f.rows.map(r => Math.abs(r[1])))) || 1};
+    mPlay.t = setInterval(() => { if(!mPlay) return; if(mPlay.k >= fr.length - 1 || S.view !== "money"){ clearInterval(mPlay.t); mPlay = null; renderMoney(); return; } mPlay.k++; renderMoney(); }, 900);
+    renderMoney();
+  };
+}
+function renderEx(m, box){
+  const M = S.money, w = S.web;
+  const mine = new Set([...(w.watch || []), ...S.star, ...((w.lists || []).flatMap(x => x.codes))]);
+  const rows = (m.exdiv || []).filter(r => M.exAll || mine.has(r[1]));
+  const today = new Date(new Date().toDateString());
+  let h = `<div class="bar"><div class="seg" id="mEx"><button data-a="0" class="${M.exAll ? "" : "on"}">我的</button><button data-a="1" class="${M.exAll ? "on" : ""}">全部</button></div>
+    <span class="muted" style="font-size:13px">未來 60 天・${rows.length} 筆</span></div>`;
+  if(!rows.length) h += `<div class="msg">${M.exAll ? "未來 60 天沒有除權息資料。" : "追蹤的股票近期沒有除權息，可以切「全部」。"}</div>`;
+  else h += `<div class="tbl"><table><thead><tr><th class="l">日期</th><th>剩</th><th class="l">股票</th><th class="l">類別</th><th>現金</th><th>殖利率</th></tr></thead><tbody>` +
+    rows.map(([d, c, nm, k, cash, stk, px]) => {
+      const left = Math.round((new Date(d) - today) / 864e5);
+      const p = quote(c).price || px, y = cash && p ? cash / p * 100 : null;
+      return `<tr data-c="${c}" class="${left <= 3 ? "up" : ""}"><td class="l">${d.slice(5)}</td><td>${left <= 0 ? "今天" : left + " 天"}</td><td class="l" style="white-space:normal;min-width:7em">${mine.has(c) ? "★ " : ""}${c} ${esc(nm || (w.stocks[c] || {}).name || "")}</td><td class="l">${esc(k)}${stk ? `<br><small class="muted">配股 ${gnum(stk)}</small>` : ""}</td>
+        <td class="num">${cash == null ? "" : gnum(cash)}</td><td class="num">${y == null ? "" : y.toFixed(2) + "%"}</td></tr>`;
+    }).join("") + "</tbody></table></div>";
+  box.innerHTML = h + '<div class="muted" style="font-size:12.5px;margin-top:6px">★＝觀察股／候選／我的；3 天內紅字。殖利率＝這次現金股利 ÷ 目前股價。點一列看個股。</div>';
+  document.querySelectorAll("#mEx button").forEach(b => b.onclick = () => { M.exAll = b.dataset.a === "1"; LS.set("money", M); renderMoney(); });
+  document.querySelectorAll("#mBody tbody tr[data-c]").forEach(r => r.onclick = () => openDetail(r.dataset.c));
+}
+
 // ---------- 國際盤勢 ----------
 const GSYM = {
   us: [["^DJI", "道瓊工業"], ["^GSPC", "S&P 500"], ["^IXIC", "那斯達克"], ["^SOX", "費城半導體"], ["^VIX", "VIX 恐慌指數"]],
@@ -855,6 +989,7 @@ function drawK(s){
 
 // ---------- 事件 ----------
 document.querySelectorAll("nav button").forEach(b => b.onclick = () => setView(b.dataset.v));
+document.querySelectorAll("#mTab button").forEach(b => b.onclick = () => { S.money.tab = b.dataset.t; LS.set("money", S.money); renderMoney(); });
 Object.entries(LV_EL).forEach(([kind, el]) => {
   $(el.f).onclick = e => { const b = e.target.closest("button"); if(!b) return; S.lv[kind].filter = b.dataset.f; S.lv[kind].touched = true; saveLv(kind); renderList(kind); };
   $(el.sort).onchange = e => { S.lv[kind].sort = e.target.value; saveLv(kind); renderList(kind); };
