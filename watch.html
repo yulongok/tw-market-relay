@@ -103,6 +103,13 @@ h3{font-size:15px;margin:16px 2px 8px}
 .dprice{font-size:22px;font-weight:700}
 .sigbox{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px 12px;margin:10px 0;display:flex;flex-wrap:wrap;gap:4px 14px;align-items:baseline}
 .sigbox .lab{font-size:19px;font-weight:700}
+.usbox{border:1px solid var(--line);background:var(--panel);border-radius:12px;padding:10px 12px;margin:10px 0}
+.usbox .top{display:flex;flex-wrap:wrap;gap:4px 12px;align-items:baseline}
+.usbox .big{font-size:22px;font-weight:700}
+.usbox .faces{display:grid;grid-template-columns:repeat(5,1fr);gap:4px;margin-top:8px;text-align:center;font-size:12.5px}
+.usbox .faces div{background:var(--row);border:1px solid var(--line);border-radius:8px;padding:4px 2px}
+.usbox .faces b{display:block;font-size:15px}
+.usbox ul{margin:6px 0 0;padding-left:18px;font-size:13px}
 .sec{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:10px 12px;margin:8px 0}
 .sec h4{margin:0 0 6px;font-size:14.5px}
 .sec ul{margin:0;padding-left:18px}
@@ -110,6 +117,11 @@ h3{font-size:15px;margin:16px 2px 8px}
 .lv .k{color:var(--muted)}
 .kbar{display:flex;gap:6px;align-items:center;margin:6px 0}
 #kc{width:100%;height:300px;display:block;touch-action:pan-y}
+.kn{margin-top:6px;font-size:13.5px}
+.kn .h{color:var(--muted);font-size:12.5px;margin:2px 0 4px}
+.kn a{display:block;padding:6px 8px;border-radius:8px;background:var(--row);border:1px solid var(--line);color:var(--text);margin-bottom:4px}
+.kn a small{display:block;color:var(--muted);font-size:11.5px}
+.kn a.bull{border-left:3px solid var(--up)} .kn a.bear{border-left:3px solid var(--down)} .kn a.ann{border-left:3px solid #a26ad0}
 .links{display:flex;flex-wrap:wrap;gap:6px}
 .links a{border:1px solid var(--line);border-radius:999px;padding:5px 11px;background:var(--panel)}
 .hl{display:flex;flex-wrap:wrap;gap:6px}
@@ -171,7 +183,7 @@ h3{font-size:15px;margin:16px 2px 8px}
       <div class="seg" id="wFilter"></div>
       <select id="wSort">
         <option value="list">清單順序</option><option value="pct">漲跌%</option><option value="sig">長線訊號</option>
-        <option value="inst">法人5日</option><option value="bias">季線乖離</option>
+        <option value="inst">法人5日</option><option value="bias">季線乖離</option><option value="us">🏅 總分</option>
       </select>
       <input type="search" id="wSearch" placeholder="代號或名稱">
     </div>
@@ -183,7 +195,7 @@ h3{font-size:15px;margin:16px 2px 8px}
       <div class="seg" id="cFilter"></div>
       <select id="cSort">
         <option value="list">清單順序</option><option value="pct">漲跌%</option><option value="sig">長線訊號</option>
-        <option value="inst">法人5日</option><option value="bias">季線乖離</option>
+        <option value="inst">法人5日</option><option value="bias">季線乖離</option><option value="us">🏅 總分</option>
       </select>
       <input type="search" id="cSearch" placeholder="代號或名稱">
     </div>
@@ -566,7 +578,8 @@ function renderList(kind){
     pct: c => quote(c).pct ?? -1e9,
     sig: c => { const s = w.stocks[c] && w.stocks[c].sig; return s ? (s.rank ?? 3) * 10 + (s.A || 0) + (s.B || 0) : -1e9; },
     inst: c => { const s = w.stocks[c] || {}; return s.f5 == null && s.t5 == null ? -1e12 : (s.f5 || 0) + (s.t5 || 0); },
-    bias: c => (w.stocks[c] || {}).bias60 ?? -1e9
+    bias: c => (w.stocks[c] || {}).bias60 ?? -1e9,
+    us: c => { const u = (w.stocks[c] || {}).us; return u && u.s != null ? u.s : -1e9; }
   }[st.sort];
   if(key) codes.sort((a, b) => key(b) - key(a));
   box.innerHTML = codes.map(c => card(c)).join("");
@@ -592,6 +605,7 @@ function card(c){
     <div class="px num"><b class="${cls(q.pct)}">${q.price == null ? "—" : gnum(q.price)}</b><small class="${cls(q.pct)}">${q.chg == null ? "" : (q.chg > 0 ? "▲" : q.chg < 0 ? "▼" : "") + gnum(Math.abs(q.chg))} ${sgn(q.pct, 2, "%")}</small></div>
     <div class="sig ${sigColor(sg)}">${sg ? esc(sg.cell || sg.label) : '<span class="muted">—</span>'}${sg && sg.A != null ? `<small>選股 ${sgn(sg.A)}・時機 ${sgn(sg.B)}</small>` : ""}</div>
     <div class="meta">
+      ${s.us && s.us.s != null ? `<span class="${s.us.s >= 70 ? "up" : s.us.s < 40 ? "down" : ""}"><b>🏅 ${s.us.s}</b>${s.us.t ? "・" + esc(s.us.t) : ""}</span>` : ""}
       ${maTxt ? `<span class="${maCls}">${maTxt}</span>` : ""}
       ${inst != null ? `<span class="${cls(inst)}">法人5日 ${sgn(inst, 0)}張</span>` : ""}
       ${s.bias60 != null ? `<span>季線乖離 ${sgn(s.bias60, 1, "%")}</span>` : ""}
@@ -888,6 +902,14 @@ function openDetail(c, keepScroll){
       <span class="${cls(q.pct)} num"> ${q.chg == null ? "" : (q.chg > 0 ? "▲" : q.chg < 0 ? "▼" : "") + gnum(Math.abs(q.chg))}（${sgn(q.pct, 2, "%")}）</span>
       <span class="pill">${esc(q.src)}</span></div>
     <button class="ibtn" id="dStar">${S.star.has(c) ? "★ 我的" : "☆ 加入我的"}</button></div>`;
+  if(s.us && s.us.s != null){
+    const u = s.us, F = ["價值", "體質", "成長", "籌碼", "技術"];
+    h += `<div class="usbox"><div class="top"><span class="muted">🏅 總分</span><span class="big ${u.s >= 70 ? "up" : u.s < 40 ? "down" : ""}">${u.s}</span>
+      ${u.t ? `<b>${esc(u.t)}</b><span class="muted" style="font-size:12.5px">${esc(u.tw || "")}</span>` : ""}</div>
+      <div class="faces">${F.map(f => `<div><span class="muted">${f}</span><b class="${(u.f || {})[f] >= 65 ? "up" : (u.f || {})[f] <= 35 ? "down" : ""}">${(u.f || {})[f] ?? "—"}</b></div>`).join("")}</div>
+      ${(u.p || []).length || (u.m || []).length ? `<ul>${(u.p || []).map(x => `<li class="up">${esc(x)}</li>`).join("")}${(u.m || []).map(x => `<li class="down">${esc(x)}</li>`).join("")}</ul>` : ""}
+      <div class="muted" style="font-size:12px;margin-top:6px">全市場同產業排名（${esc(S.web.us_style || "均衡")}風格）；跟電腦版「🔍 全市場篩選」同一套。不是投資建議。</div></div>`;
+  }
   if(sg){
     h += `<div class="sigbox"><span class="muted">長線訊號</span><span class="lab ${sigColor(sg)}">${esc(sg.cell || sg.label)}</span>
       ${sg.A != null ? `<span class="muted">選股 ${sgn(sg.A)}　時機 ${sgn(sg.B)}</span>` : ""}
@@ -902,7 +924,8 @@ function openDetail(c, keepScroll){
   }
   h += `<div class="sec"><h4>🕯 K 線 <span class="muted" style="font-weight:400;font-size:12.5px">橘＝月線　藍＝季線</span></h4>
     <div class="kbar"><div class="seg" id="kRange">${[[60, "3月"], [120, "6月"], [250, "1年"]].map(([n, t]) => `<button data-n="${n}" class="${S.krange == n ? "on" : ""}">${t}</button>`).join("")}</div>
-    <span class="muted" id="kInfo" style="font-size:12.5px"></span></div><canvas id="kc"></canvas></div>`;
+    <span class="muted" id="kInfo" style="font-size:12.5px"></span></div><canvas id="kc"></canvas>
+    <div class="kn" id="kNews"></div></div>`;
   h += `<div class="sec"><h4>📊 基本面</h4>${(s.fund || []).length ? esc(s.fund.join("・")) : '<span class="muted">沒有資料</span>'}
     ${s.biz ? `<div class="muted" style="margin-top:6px;font-size:13.5px">主要業務：${esc(s.biz.length > 220 ? s.biz.slice(0, 220) + "…" : s.biz)}</div>` : ""}</div>`;
   const comp = names => names.flatMap(n => ((sg && sg.comps[n]) || []).map(([k, v, t]) => `<div class="${v > 0 ? "up" : v < 0 ? "down" : ""}">${esc(k)}：${esc(t)}</div>`)).join("");
@@ -936,8 +959,36 @@ function closeDetail(){
   render(true);
 }
 function ma(arr, n){ const out = []; let s = 0; arr.forEach((v, i) => { s += v; if(i >= n) s -= arr[i - n]; out.push(i >= n - 1 ? s / n : null); }); return out; }
+// ---------- 📰 K 線新聞（market_news.json：GitHub 每天補追蹤股近 90 天的 Google 新聞＋重大訊息） ----------
+function ensureNews(){
+  if(S.news !== undefined) return;
+  S.news = null;
+  getJSON("market_news.json").then(j => { S.news = j || {}; if(S.cur && S.web) drawK(S.web.stocks[S.cur] || {}); }).catch(() => { S.news = {}; });
+}
+function newsByDay(code, days){
+  // 收盤 13:30 後（含）的新聞算下一個交易日；非交易日算下一個交易日
+  const raw = ((S.news && S.news.items) || {})[code], out = {};
+  const items = Array.isArray(raw) ? raw.filter(r => Array.isArray(r) && typeof r[0] === "string" && r[0].length >= 10 && r[1]) : [];
+  for(const r of items){
+    const d = r[0].slice(0, 10), tm = r[0].slice(11, 16) || "00:00";
+    let lo = 0, hi = days.length;
+    while(lo < hi){ const m = (lo + hi) >> 1; if(days[m] < d) lo = m + 1; else hi = m; }
+    let i = lo; if(i < days.length && days[i] === d && tm >= "13:30") i++;
+    if(i < days.length) (out[days[i]] = out[days[i]] || []).push(r);
+  }
+  Object.values(out).forEach(a => a.sort((x, y) => y[0] < x[0] ? -1 : 1));
+  return out;
+}
+function showNews(d, items){
+  const box = $("#kNews"); if(!box) return;
+  if(!items || !items.length){ box.innerHTML = d ? `<div class="h">${d}：沒有新聞</div>` : ""; return; }
+  const src = {news: "新聞", ann: "公告", note: "消息面"};
+  box.innerHTML = `<div class="h">📰 ${d}　${items.length} 則（收盤後的新聞算下一個交易日）</div>` + items.map(r =>
+    `<a href="${esc(r[3] || "#")}" target="_blank" rel="noopener" class="${r[4] === "ann" ? "ann" : esc(r[5] || "")}">${esc(r[1])}<small>${esc(r[0].slice(5))}・${src[r[4]] || ""}・${esc(r[2] || "")}</small></a>`).join("");
+}
 function drawK(s){
   const cv = $("#kc"); if(!cv) return;
+  ensureNews();
   const lk = S.cur && LIVE.k[S.cur];
   const px = lk ? lk.rows.map(r => [r[0], r[4]]) : (s.px || []), oh = lk ? lk.rows.map(r => r.slice(0, 5)) : (s.ohlc || []);
   const N = S.krange;
@@ -974,15 +1025,25 @@ function drawK(s){
     g.strokeStyle = col; g.lineWidth = 1.3; g.beginPath(); let on = false;
     rows.forEach((r, i) => { const v = (mm[r[0]] || [])[k]; if(v){ on ? g.lineTo(X(i), Y(v)) : g.moveTo(X(i), Y(v)); on = true; } }); g.stroke();
   });
+  // 📰 有新聞的日子：K 棒下方小點（紅偏利多、綠偏利空、灰中性、紫重大訊息）
+  const nby = newsByDay(S.cur, [...new Set([...dAll, ...rows.map(r => r[0])])].sort());
+  let nN = 0;
+  rows.forEach((r, i) => {
+    const its = nby[r[0]]; if(!its) return; nN += its.length;
+    const nb = its.filter(x => x[5] === "bull").length, ne = its.filter(x => x[5] === "bear").length;
+    g.fillStyle = its.some(x => x[4] === "ann") ? "#a26ad0" : nb > ne ? up : ne > nb ? dn : css("--muted");
+    g.beginPath(); g.arc(X(i), H - B - 3, Math.min(4, Math.max(2, cw * 0.32)) + (its.length >= 3 ? 1 : 0), 0, Math.PI * 2); g.fill();
+  });
   const last = rows[rows.length - 1], first = rows[0];
   const chgP = (last[4] / first[4] - 1) * 100;
-  $("#kInfo").innerHTML = `${lk ? "🌐 " + (mktOf(S.cur) === "otc" ? "櫃買" : "證交所") + " " : LIVE.mode === "live" && LIVE.kBusy[S.cur] ? "網路抓取中…（先顯示 GitHub）" : "GitHub "}${useC ? "K 線" : "收盤線（K 線資料不足）"}・區間 <span class="${cls(chgP)}">${sgn(chgP, 1, "%")}</span>`;
+  $("#kInfo").innerHTML = `${lk ? "🌐 " + (mktOf(S.cur) === "otc" ? "櫃買" : "證交所") + " " : LIVE.mode === "live" && LIVE.kBusy[S.cur] ? "網路抓取中…（先顯示 GitHub）" : "GitHub "}${useC ? "K 線" : "收盤線（K 線資料不足）"}・區間 <span class="${cls(chgP)}">${sgn(chgP, 1, "%")}</span>${nN ? `・📰 ${nN} 則（點 K 棒看）` : S.news === null ? "・📰 讀取中" : ""}`;
   // 觸控／滑鼠：十字線
   const show = ev => {
     const rect = cv.getBoundingClientRect(), xx = (ev.touches ? ev.touches[0].clientX : ev.clientX) - rect.left;
     const i = Math.max(0, Math.min(rows.length - 1, Math.floor((xx - L) / cw)));
     const r = rows[i], m = mm[r[0]] || [];
-    $("#kInfo").innerHTML = `${r[0]}　${useC ? `開 ${gnum(r[1])} 高 ${gnum(r[2])} 低 ${gnum(r[3])} ` : ""}收 <b>${gnum(r[4])}</b>${m[0] ? `　月線 ${fmt(m[0], 1)}` : ""}${m[1] ? `　季線 ${fmt(m[1], 1)}` : ""}`;
+    $("#kInfo").innerHTML = `${r[0]}　${useC ? `開 ${gnum(r[1])} 高 ${gnum(r[2])} 低 ${gnum(r[3])} ` : ""}收 <b>${gnum(r[4])}</b>${m[0] ? `　月線 ${fmt(m[0], 1)}` : ""}${m[1] ? `　季線 ${fmt(m[1], 1)}` : ""}${nby[r[0]] ? `　📰 ${nby[r[0]].length} 則` : ""}`;
+    showNews(r[0], nby[r[0]]);
   };
   cv.onmousemove = show; cv.ontouchstart = show; cv.ontouchmove = show;
 }
