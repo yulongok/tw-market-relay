@@ -288,6 +288,8 @@ const LIVE = {mode: LS.get("src", "live"), ok: {}, q: {}, qAt: "", qSrc: "", idx
 const p2 = n => String(n).padStart(2, "0");
 const isoD = d => `${d.getFullYear()}-${p2(d.getMonth() + 1)}-${p2(d.getDate())}`;
 const numx = v => { if(v == null) return null; const n = parseFloat(String(v).replace(/,/g, "")); return isNaN(n) ? null : n; };
+// MIS 五檔「價_價_…」取第一個大於 0 的價格；0.0000 是市價單，不是成交價
+const firstPos = s => { for(const p of String(s || "").split("_")){ const v = numx(p); if(v > 0) return v; } return null; };
 const rocIso = s => { const m = String(s).trim().match(/^(\d{2,3})\/(\d{1,2})\/(\d{1,2})/); return m ? `${+m[1] + 1911}-${p2(+m[2])}-${p2(+m[3])}` : null; };
 async function fetchX(url, ms = 15000){
   const ctl = new AbortController(), t = setTimeout(() => ctl.abort(), ms);
@@ -304,7 +306,7 @@ async function liveMIS(codes){
     for(const m of j.msgArray || []){
       const y = numx(m.y);
       let z = numx(m.z);
-      if(z == null) z = numx((m.b || "").split("_")[0]) ?? numx((m.a || "").split("_")[0]);
+      if(!(z > 0)) z = firstPos(m.b) ?? firstPos(m.a);
       if(z == null || !y) continue;
       const d = m.d ? `${m.d.slice(0, 4)}-${m.d.slice(4, 6)}-${m.d.slice(6, 8)}` : today();
       const q = {price: z, chg: +(z - y).toFixed(2), pct: (z / y - 1) * 100, time: m.t || "", date: d};
@@ -478,7 +480,7 @@ function quote(c){
   const base = S.web && S.web.date || "";
   const lv = LIVE.mode === "live" && LIVE.q[c];
   const r = S.rt && S.rt.quotes && S.rt.quotes[c];
-  const rd = r && r.price != null ? (r.date || today()).replace(/\//g, "-") : "";
+  const rd = r && r.price > 0 ? (r.date || today()).replace(/\//g, "-") : "";
   if(lv && lv.price != null && lv.date >= base && lv.date >= rd)
     return {price: lv.price, chg: lv.chg, pct: lv.pct, src: `🌐 ${LIVE.qSrc} ${lv.time ? lv.time.slice(0, 5) : lv.date.slice(5).replace("-", "/")}`, rt: true};
   if(rd && rd >= base) return {price: r.price, chg: r.chg, pct: r.pct, src: "GitHub 即時 " + (r.time || "").slice(0, 5), rt: true};
