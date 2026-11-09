@@ -52,6 +52,10 @@ input[type=search]{flex:1;min-width:120px}
 .msg{padding:14px;border:1px dashed var(--line);border-radius:12px;color:var(--muted);margin:8px 0}
 /* 觀察股卡片 */
 .list{display:flex;flex-direction:column;gap:6px}
+.addbox{display:flex;gap:6px;margin:0 0 8px}
+.addbox input{flex:1;min-width:0;font-size:16px;padding:8px 10px;border-radius:10px;border:1px solid var(--line);background:var(--row);color:inherit}
+.addbox button{white-space:nowrap}
+.card .rm{border:none;background:none;color:var(--muted,#888);font-size:18px;padding:0 4px;margin-left:6px;cursor:pointer}
 .card{background:var(--row);border:1px solid var(--line);border-radius:12px;padding:9px 10px;display:grid;
   grid-template-columns:minmax(96px,1.1fr) auto minmax(90px,1fr);gap:2px 10px;align-items:center;cursor:pointer}
 .card:active{background:var(--row2)}
@@ -245,7 +249,7 @@ h3{font-size:15px;margin:16px 2px 8px}
     <button class="ibtn" id="setCancel">取消</button>
     <button class="ibtn" id="setOk" style="background:var(--accent);color:#fff;border-color:var(--accent)">儲存</button>
   </div>
-  <div class="muted" style="font-size:12px;margin-top:10px">唯讀：股價、K 線、指數先直接抓證交所／櫃買／Yahoo，抓不到才用 GitHub；長線訊號、風險、市場掃描由 GitHub 每天算好。不會寫回任何地方。⭐ 我的清單只存在這台裝置的瀏覽器。</div>
+  <div class="muted" style="font-size:12px;margin-top:10px">唯讀：股價、K 線、指數先直接抓證交所／櫃買／Yahoo，抓不到才用 GitHub；長線訊號、風險、市場掃描由 GitHub 每天算好。不會寫回任何地方。⭐ 我的、➕ 新增清單只存在這台裝置的瀏覽器。</div>
 </div></div>
 <div class="toast" id="toast"></div>
 
@@ -260,6 +264,8 @@ const LS = {
 const S = {
   base: LS.get("base", DEFAULT_BASE), web: null, rt: null, glob: null,
   star: new Set(LS.get("star", [])),
+  added: new Set(LS.get("added", [])),                   // ➕ 新增清單（只存在這台裝置；跟 watch2.html 共用）
+  sl: null,                                              // 全部上市櫃代號表（stock_list.json）：代號 → [名稱, 市場, 產業]
   lv: {watch: {filter: LS.get("filter", "star"), sort: LS.get("sort", "list"), q: ""},
        cand: {filter: LS.get("cfilter", "all"), sort: LS.get("csort", "list"), q: ""}},
   scan: Object.assign({mode: "vol", nd: "5", by: "vol", col: null, desc: true}, LS.get("scan", {})),
@@ -296,7 +302,44 @@ async function fetchX(url, ms = 15000){
   try{ const r = await fetch(url, {signal: ctl.signal, cache: "no-store"}); if(!r.ok) throw new Error("HTTP " + r.status); return await r.json(); }
   finally{ clearTimeout(t); }
 }
-function mktOf(c){ return (S.web && S.web.stocks[c] && S.web.stocks[c].mkt) || "tse"; }
+function mktOf(c){
+  const s = S.web && S.web.stocks[c];
+  if(s && s.mkt) return s.mkt;
+  const l = S.sl && S.sl[c];
+  return l && String(l[1]).includes("櫃") ? "otc" : "tse";
+}
+// 手機自己新增、GitHub 沒算的股票：用代號表湊出名稱／產業，其他欄位顯示「沒有資料」
+function liteStock(c){
+  const l = S.sl && S.sl[c];
+  return {name: l ? l[0] : "", ind: l ? (l[2] || l[1] || "") : "", mkt: mktOf(c), lite: true};
+}
+// 輸入的字串 → 代號清單（代號或名稱，可多檔，空白／逗號／頓號分隔）
+function parseAdd(txt){
+  const ok = [], bad = [];
+  const all = Object.assign({}, S.sl || {});
+  Object.entries((S.web && S.web.stocks) || {}).forEach(([c, s]) => { if(!all[c]) all[c] = [s.name || "", "", s.ind || ""]; });
+  for(const t0 of String(txt).split(/[\s,，、;；]+/)){
+    const t = t0.trim().toUpperCase();
+    if(!t) continue;
+    if(/^\d{4,6}[A-Z]?$/.test(t)){
+      if(all[t] || !S.sl) ok.push(t); else bad.push(t0);
+      continue;
+    }
+    let hit = Object.keys(all).filter(c => (all[c][0] || "").toUpperCase() === t);
+    if(!hit.length) hit = Object.keys(all).filter(c => (all[c][0] || "").toUpperCase().includes(t));
+    if(hit.length === 1) ok.push(hit[0]); else bad.push(t0 + (hit.length > 1 ? `（${hit.length} 檔符合，請打代號）` : ""));
+  }
+  return {ok: [...new Set(ok)], bad};
+}
+function addCodes(txt){
+  const {ok, bad} = parseAdd(txt);
+  const nw = ok.filter(c => !S.added.has(c));
+  nw.forEach(c => S.added.add(c));
+  LS.set("added", [...S.added]);
+  toast((nw.length ? `➕ 加入 ${nw.join("、")}` : ok.length ? "已經在新增清單" : "") + (bad.length ? `${nw.length || ok.length ? "；" : ""}找不到：${bad.join("、")}` : ""), 3500);
+  if(nw.length) liveQuotes().then(() => render(true));
+  return nw.length;
+}
 // 盤中即時：證交所 MIS（上市＋上櫃，含加權／櫃買指數）
 async function liveMIS(codes){
   const out = {}, idx = {};
@@ -366,7 +409,7 @@ async function liveTpexClose(){
 }
 async function liveQuotes(){
   if(LIVE.mode !== "live" || !S.web) return;
-  const codes = Object.keys(S.web.stocks);
+  const codes = [...new Set([...Object.keys(S.web.stocks), ...S.star, ...S.added])];
   if(LIVE.ok.mis !== false){                         // 即時報價擋過一次就不再試（省時間）
     try{
       const r = await liveMIS(codes);
@@ -494,6 +537,7 @@ async function loadAll(silent){
   try{ S.web = await getJSON("web.json"); }catch(e){ errs.push(e.message); }
   try{ S.rt = await getJSON("realtime.json"); }catch(e){ S.rt = null; }
   try{ S.glob = await getJSON("global.json"); }catch(e){ errs.push(e.message); }
+  if(!S.sl){ try{ const j = await getJSON("stock_list.json"); S.sl = (j && (j.stocks || j)) || null; }catch(e){ S.sl = null; } }
   stamp(errs);
   renderIdx(); render();
   if(errs.length && !silent) toast("⚠ " + errs.join("；"), 4000);
@@ -549,7 +593,7 @@ function lvFilters(kind){
   const mine = L.filter(x => x.kind === kind);
   const out = mine.map((x, i) => [kind + i, x.name, x.codes]);
   if(kind === "watch"){
-    out.unshift(["star", "⭐ 我的", [...S.star]]);
+    out.unshift(["star", "⭐ 我的", [...S.star]], ["added", "➕ 新增", [...S.added]]);
     L.filter(x => x.kind === "hold").forEach((x, i) => out.push(["hold" + i, "💼 " + x.name, x.codes]));
     out.push(["all", "全部追蹤", w ? w.watch : []]);
   } else if(mine.length > 1){
@@ -562,18 +606,21 @@ function renderList(kind){
   $(el.sort).value = st.sort;
   if(!w){ $(el.f).innerHTML = ""; box.innerHTML = '<div class="msg">讀不到 web.json。GitHub 的 tw-market-relay 要先跑過一次（Actions → tw-market-relay → Run workflow），或按 ⚙ 檢查網址。</div>'; return; }
   const fl = lvFilters(kind);
-  if(!fl.some(f => f[0] === st.filter) || (st.filter === "star" && !S.star.size && !st.touched)) st.filter = (fl.find(f => f[0] !== "star" && f[2].length) || fl[0] || [])[0];
+  if(!fl.some(f => f[0] === st.filter) || (((st.filter === "star" && !S.star.size) || (st.filter === "added" && !S.added.size)) && !st.touched)) st.filter = (fl.find(f => f[0] !== "star" && f[0] !== "added" && f[2].length) || fl[0] || [])[0];
   $(el.f).innerHTML = fl.map(([id, t, cs]) => `<button data-f="${id}" class="${id === st.filter ? "on" : ""}">${esc(t)}${id === "star" ? "" : ` <span class="muted" style="font-size:12px">${cs.length}</span>`}</button>`).join("");
   if(kind === "cand" && !fl.length){
     box.innerHTML = '<div class="msg">GitHub 的 codes.txt 還沒分「觀察股／候選名單」。在 DeskNotes 觀察股點「● GitHub → 📋 複製 codes.txt 內容」，到 GitHub 開 codes.txt → ✏️ → 全選貼上 → Commit，下次 tw-market-relay 跑完就會出現。</div>';
     return;
   }
   const q = st.q.trim().toUpperCase();
+  const addBox = kind === "watch" && st.filter === "added" && !q
+    ? `<div class="addbox"><input id="addIn" type="text" placeholder="輸入代號或名稱，例如 2330 鴻海 3661" enterkeyhint="done" autocomplete="off"><button class="ibtn" id="addBtn">➕ 加入</button></div>` : "";
   let codes = q ? Object.keys(w.stocks).filter(c => c.includes(q) || (w.stocks[c].name || "").toUpperCase().includes(q))
                 : ((fl.find(f => f[0] === st.filter) || [])[2] || []).slice();
   if(!codes.length){
-    box.innerHTML = q ? '<div class="msg">找不到。這裡只有 GitHub 追蹤的股票（codes.txt＋市場掃描名單）。</div>'
-      : st.filter === "star" ? '<div class="msg">⭐ 我的清單是空的：在個股總覽按 ☆ 加入。</div>' : '<div class="msg">這個清單是空的。</div>';
+    box.innerHTML = addBox + (q ? '<div class="msg">找不到。這裡只有 GitHub 追蹤的股票（codes.txt＋市場掃描名單）。</div>'
+      : st.filter === "star" ? '<div class="msg">⭐ 我的清單是空的：在個股總覽按 ☆ 加入。</div>'
+      : st.filter === "added" ? '<div class="msg">➕ 新增清單是空的：在上面輸入代號或名稱（可一次多檔），或在個股總覽按「➕ 加入新增」。</div>' : '<div class="msg">這個清單是空的。</div>');
     return;
   }
   const key = {
@@ -584,15 +631,21 @@ function renderList(kind){
     us: c => { const u = (w.stocks[c] || {}).us; return u && u.s != null ? u.s : -1e9; }
   }[st.sort];
   if(key) codes.sort((a, b) => key(b) - key(a));
-  box.innerHTML = codes.map(c => card(c)).join("");
+  box.innerHTML = addBox + codes.map(c => card(c, !!addBox)).join("");
 }
 function saveLv(kind){
   const st = S.lv[kind];
   LS.set(kind === "watch" ? "filter" : "cfilter", st.filter); LS.set(kind === "watch" ? "sort" : "csort", st.sort);
 }
-function card(c){
+function card(c, rm){
+  const rmBtn = rm ? `<button class="rm" data-rm="${c}" title="從新增移除">✕</button>` : "";
   const s = S.web.stocks[c];
-  if(!s) return `<div class="card" data-c="${c}"><div><div class="nm">${c}</div><div class="ind">GitHub 這次沒有這檔資料</div></div></div>`;
+  if(!s){
+    const l = liteStock(c), q = quote(c);
+    return `<div class="card" data-c="${c}"><div><div class="nm">${c} ${esc(l.name)}${rmBtn}</div><div class="ind">${esc(l.ind)}${l.ind ? "・" : ""}只在手機新增，GitHub 沒有每天計算</div></div>
+      <div class="px num"><b class="${cls(q.pct)}">${q.price == null ? "—" : gnum(q.price)}</b><small class="${cls(q.pct)}">${q.chg == null ? "" : (q.chg > 0 ? "▲" : q.chg < 0 ? "▼" : "") + gnum(Math.abs(q.chg))} ${sgn(q.pct, 2, "%")}</small></div>
+      <div class="sig"><span class="muted">—</span></div><div class="meta">${q.rt ? `<span class="pill">${esc(q.src)}</span>` : ""}</div></div>`;
+  }
   const q = quote(c), sg = s.sig;
   const ma = s.ma || {};
   const maTxt = ["60", "240"].filter(k => k in ma).map(k => (k === "60" ? "季" : "年") + (ma[k] ? "↑" : "↓")).join(" ");
@@ -603,7 +656,7 @@ function card(c){
   const lv = risk.length ? Math.max(...risk.map(r => r[0])) : 0;
   const rk = risk.slice().sort((a, b) => b[0] - a[0]);
   return `<div class="card" data-c="${c}">
-    <div><div class="nm">${c} ${esc(s.name)}${S.star.has(c) ? '<span class="star">★</span>' : ""}</div><div class="ind">${esc(s.ind)}</div></div>
+    <div><div class="nm">${c} ${esc(s.name)}${S.star.has(c) ? '<span class="star">★</span>' : ""}${rmBtn}</div><div class="ind">${esc(s.ind)}</div></div>
     <div class="px num"><b class="${cls(q.pct)}">${q.price == null ? "—" : gnum(q.price)}</b><small class="${cls(q.pct)}">${q.chg == null ? "" : (q.chg > 0 ? "▲" : q.chg < 0 ? "▼" : "") + gnum(Math.abs(q.chg))} ${sgn(q.pct, 2, "%")}</small></div>
     <div class="sig ${sigColor(sg)}">${sg ? esc(sg.cell || sg.label) : '<span class="muted">—</span>'}${sg && sg.A != null ? `<small>選股 ${sgn(sg.A)}・時機 ${sgn(sg.B)}</small>` : ""}</div>
     <div class="meta">
@@ -813,7 +866,7 @@ function bindInd(m){
 }
 function renderEx(m, box){
   const M = S.money, w = S.web;
-  const mine = new Set([...(w.watch || []), ...S.star, ...((w.lists || []).flatMap(x => x.codes))]);
+  const mine = new Set([...(w.watch || []), ...S.star, ...S.added, ...((w.lists || []).flatMap(x => x.codes))]);
   const rows = (m.exdiv || []).filter(r => M.exAll || mine.has(r[1]));
   const today = new Date(new Date().toDateString());
   let h = `<div class="bar"><div class="seg" id="mEx"><button data-a="0" class="${M.exAll ? "" : "on"}">我的</button><button data-a="1" class="${M.exAll ? "on" : ""}">全部</button></div>
@@ -826,7 +879,7 @@ function renderEx(m, box){
       return `<tr data-c="${c}" class="${left <= 3 ? "up" : ""}"><td class="l">${d.slice(5)}</td><td>${left <= 0 ? "今天" : left + " 天"}</td><td class="l" style="white-space:normal;min-width:7em">${mine.has(c) ? "★ " : ""}${c} ${esc(nm || (w.stocks[c] || {}).name || "")}</td><td class="l">${esc(k)}${stk ? `<br><small class="muted">配股 ${gnum(stk)}</small>` : ""}</td>
         <td class="num">${cash == null ? "" : gnum(cash)}</td><td class="num">${y == null ? "" : y.toFixed(2) + "%"}</td></tr>`;
     }).join("") + "</tbody></table></div>";
-  box.innerHTML = h + '<div class="muted" style="font-size:12.5px;margin-top:6px">★＝觀察股／候選／我的；3 天內紅字。殖利率＝這次現金股利 ÷ 目前股價。點一列看個股。</div>';
+  box.innerHTML = h + '<div class="muted" style="font-size:12.5px;margin-top:6px">★＝觀察股／候選／我的／新增；3 天內紅字。殖利率＝這次現金股利 ÷ 目前股價。點一列看個股。</div>';
   document.querySelectorAll("#mEx button").forEach(b => b.onclick = () => { M.exAll = b.dataset.a === "1"; LS.set("money", M); renderMoney(); });
   document.querySelectorAll("#mBody tbody tr[data-c]").forEach(r => r.onclick = () => openDetail(r.dataset.c));
 }
@@ -869,7 +922,7 @@ function renderGlobal(){
   if(!cats.includes(gNewsCat)) gNewsCat = cats[0];
   h += `<h3>📰 重要消息</h3><div class="seg" id="gCats" style="margin-bottom:8px">${cats.map(c => `<button data-c="${esc(c)}" class="${c === gNewsCat ? "on" : ""}">${esc(c)}</button>`).join("")}</div>`;
   h += `<div class="news">${newsList((g.news || {})[gNewsCat] || [])}</div>`;
-  const mine = new Set([...(S.web ? S.web.watch : []), ...S.star]);
+  const mine = new Set([...(S.web ? S.web.watch : []), ...S.star, ...S.added]);
   const sn = (g.stock_news || []).filter(x => (x.codes || []).some(c => mine.has(c)));
   if(sn.length) h += `<h3>🔖 追蹤股的消息</h3><div class="news">${newsList(sn)}</div>`;
   box.innerHTML = h;
@@ -880,7 +933,7 @@ function newsList(arr){
 
 // ---------- 個股總覽 ----------
 function openDetail(c, keepScroll){
-  const w = S.web, s = w && w.stocks[c];
+  const w = S.web, s = (w && w.stocks[c]) || (S.added.has(c) ? liteStock(c) : null);
   S.cur = c;
   const dv = $("#detail"), y = dv.scrollTop;
   dv.classList.add("show"); document.body.style.overflow = "hidden";
@@ -903,7 +956,9 @@ function openDetail(c, keepScroll){
       <span class="dprice num ${cls(q.pct)}">${q.price == null ? "—" : gnum(q.price)}</span>
       <span class="${cls(q.pct)} num"> ${q.chg == null ? "" : (q.chg > 0 ? "▲" : q.chg < 0 ? "▼" : "") + gnum(Math.abs(q.chg))}（${sgn(q.pct, 2, "%")}）</span>
       <span class="pill">${esc(q.src)}</span></div>
-    <button class="ibtn" id="dStar">${S.star.has(c) ? "★ 我的" : "☆ 加入我的"}</button></div>`;
+    <div style="display:flex;flex-direction:column;gap:4px">${s.lite ? "" : `<button class="ibtn" id="dStar">${S.star.has(c) ? "★ 我的" : "☆ 加入我的"}</button>`}
+    <button class="ibtn" id="dAdd">${S.added.has(c) ? "✓ 新增" : "➕ 加入新增"}</button></div></div>`;
+  if(s.lite) h += `<div class="msg">這檔只在手機新增，GitHub 沒有每天計算長線訊號、籌碼、總分（要加進 codes.txt 才有）。股價和 K 線照樣直接抓。</div>`;
   if(s.us && s.us.s != null){
     const u = s.us, F = ["價值", "體質", "成長", "籌碼", "技術"];
     h += `<div class="usbox"><div class="top"><span class="muted">🏅 總分</span><span class="big ${u.s >= 70 ? "up" : u.s < 40 ? "down" : ""}">${u.s}</span>
@@ -1057,7 +1112,14 @@ Object.entries(LV_EL).forEach(([kind, el]) => {
   $(el.f).onclick = e => { const b = e.target.closest("button"); if(!b) return; S.lv[kind].filter = b.dataset.f; S.lv[kind].touched = true; saveLv(kind); renderList(kind); };
   $(el.sort).onchange = e => { S.lv[kind].sort = e.target.value; saveLv(kind); renderList(kind); };
   $(el.q).oninput = e => { S.lv[kind].q = e.target.value; renderList(kind); };
-  $(el.box).onclick = e => { const c = e.target.closest(".card"); if(c) openDetail(c.dataset.c); };
+  $(el.box).onclick = e => {
+    const rmb = e.target.closest("[data-rm]");
+    if(rmb){ S.added.delete(rmb.dataset.rm); LS.set("added", [...S.added]); toast("已從新增移除 " + rmb.dataset.rm); renderList(kind); return; }
+    if(e.target.closest("#addBtn")){ const v = $("#addIn").value; if(v.trim() && addCodes(v)) renderList(kind); else $("#addIn").focus(); return; }
+    if(e.target.closest(".addbox")) return;
+    const c = e.target.closest(".card"); if(c) openDetail(c.dataset.c);
+  };
+  $(el.box).onkeydown = e => { if(e.key === "Enter" && e.target.id === "addIn"){ e.preventDefault(); $("#addBtn").click(); } };
 });
 $("#sMode").onclick = e => { const b = e.target.closest("button"); if(!b) return; S.scan.mode = b.dataset.m; S.scan.col = null; saveScan(); renderScan(); };
 $("#sBy").onclick = e => { const b = e.target.closest("button"); if(!b) return; S.scan.by = b.dataset.b; saveScan(); renderScan(); };
@@ -1074,6 +1136,7 @@ $("#sChart").onclick = () => { $("#sChart").classList.toggle("full"); drawBars(b
 $("#gBody").onclick = e => { const b = e.target.closest("#gCats button"); if(b){ gNewsCat = b.dataset.c; renderGlobal(); } };
 $("#dBody").onclick = e => {
   if(e.target.closest("#dBack")){ closeDetail(); return; }
+  if(e.target.closest("#dAdd")){ const c = S.cur; S.added.has(c) ? S.added.delete(c) : S.added.add(c); LS.set("added", [...S.added]); openDetail(c, true); return; }
   if(e.target.closest("#dStar")){ const c = S.cur; S.star.has(c) ? S.star.delete(c) : S.star.add(c); LS.set("star", [...S.star]); openDetail(c, true); return; }
   const b = e.target.closest("#kRange button"); if(b){ S.krange = +b.dataset.n; LS.set("krange", S.krange); openDetail(S.cur, true); }
 };
