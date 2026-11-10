@@ -781,6 +781,9 @@ function drawBars(items, title){
 // ---------- 💰 資金（法人金額、產業流向、除權息；資料：web.json 的 money） ----------
 const WHO = [["foreign", "外資"], ["trust", "投信"], ["dealer", "自營商"], ["total", "三大法人"]];
 const yi = (v, d = 0) => v == null ? "—" : (v > 0 ? "▲" : v < 0 ? "▼" : "") + sgn(v, d) + " 億";
+// 摘要卡用：一萬億以上改成「兆」、億加千分位，手機窄格子才放得下
+const yiK = v => v == null ? "—" : (v > 0 ? "▲" : v < 0 ? "▼" : "") + (v > 0 ? "+" : "") +
+  (Math.abs(v) >= 10000 ? (v / 10000).toFixed(2) + " 兆" : fmt(v, 1) + " 億");
 function flowBars(arr){
   const a = arr || [], n = a.length; if(!n) return "";
   const mx = Math.max(...a.map(v => Math.abs(v || 0))) || 1, w = 100 / n;
@@ -840,9 +843,9 @@ function renderInd(m, box){
   if(!rows){ box.innerHTML = h + '<div class="msg">沒有資料：法人金額要有全市場法人買賣超；成交估計要有全市場成交量。</div>'; bindInd(m); return; }
   const hi = rows[0], lo = rows[rows.length - 1];
   h += `<div class="muted" style="font-size:13px;margin:0 2px 6px">${esc(title)}</div>
-    <div class="kp"><div><div class="n">全市場合計</div><div class="v ${cls(total)}">${yi(total, 1)}</div></div>
-    <div><div class="n">吸金最多</div><div class="v">${esc(hi[0])}</div><small class="${cls(hi[1])}">${yi(hi[1], 1)}</small></div>
-    <div><div class="n">失血最多</div><div class="v">${esc(lo[0])}</div><small class="${cls(lo[1])}">${yi(lo[1], 1)}</small></div></div>` +
+    <div class="kp"><div><div class="n">全市場合計</div><div class="v ${cls(total)}">${yiK(total)}</div></div>
+    <div><div class="n">吸金最多</div><div class="v">${esc(hi[0])}</div><small class="${cls(hi[1])}">${yiK(hi[1])}</small></div>
+    <div><div class="n">失血最多</div><div class="v">${esc(lo[0])}</div><small class="${cls(lo[1])}">${yiK(lo[1])}</small></div></div>` +
     indBlock(rows, mPlay ? mPlay.scale : null, M.open) +
     `<div class="muted" style="font-size:12.5px;margin-top:6px">${M.mode === "inst" && !mPlay ? "法人金額＝每檔法人買賣超張數 × 收盤 × 1000，依產業加總（億元）。點產業看主要貢獻股。" : mPlay ? "重播固定刻度，天與天之間可以比大小。" : "成交估計＝上漲股成交金額算流入、下跌股算流出，只是近似，不是主動買賣（外盤−內盤）。"}</div>`;
   box.innerHTML = h; bindInd(m);
