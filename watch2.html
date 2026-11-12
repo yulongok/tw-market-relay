@@ -237,9 +237,7 @@ h3{font-size:15px;margin:16px 2px 8px}
 
 <div id="settings"><div class="box">
   <b>設定</b>
-  <div class="muted" style="font-size:13px;margin-top:8px">GitHub 轉存網址（data 資料夾）</div>
-  <input type="text" id="setBase" spellcheck="false">
-  <div class="muted" style="font-size:13px">資料來源</div>
+  <div class="muted" style="font-size:13px;margin-top:8px">資料來源</div>
   <div class="seg" id="setSrc" style="margin:6px 0 4px"><button data-s="live">網路優先（GitHub 備援）</button><button data-s="github">只用 GitHub</button></div>
   <div style="margin:4px 0 12px"><button class="ibtn" id="setTest">🩺 測試網路來源</button><div id="testOut" class="muted" style="font-size:12.5px;margin-top:6px;white-space:pre-line"></div></div>
   <div class="muted" style="font-size:13px">主題</div>
@@ -1145,7 +1143,6 @@ let rsz; window.addEventListener("resize", () => { clearTimeout(rsz); rsz = setT
 $("#btnReload").onclick = () => loadAll(false);
 function applyTheme(t){ if(t === "auto") document.documentElement.removeAttribute("data-theme"); else document.documentElement.setAttribute("data-theme", t); }
 $("#btnSet").onclick = () => {
-  $("#setBase").value = S.base;
   document.querySelectorAll("#setSrc button").forEach(b => b.classList.toggle("on", b.dataset.s === LIVE.mode));
   const t = LS.get("theme", "auto");
   document.querySelectorAll("#setTheme button").forEach(b => b.classList.toggle("on", b.dataset.t === t));
@@ -1157,7 +1154,6 @@ $("#setTest").onclick = () => testSources();
 $("#setCancel").onclick = () => $("#settings").classList.remove("show");
 $("#setClear").onclick = () => { if(!confirm("清空 ➕ 新增清單？")) return; S.star.clear(); LS.set("added", []); toast("➕ 新增清單已清空"); render(); };
 $("#setOk").onclick = () => {
-  S.base = $("#setBase").value.trim() || DEFAULT_BASE; LS.set("base", S.base);
   const t = (document.querySelector("#setTheme button.on") || {}).dataset?.t || "auto"; LS.set("theme", t); applyTheme(t);
   LIVE.mode = (document.querySelector("#setSrc button.on") || {}).dataset?.s || "live"; LS.set("src", LIVE.mode);
   if(LIVE.mode !== "live"){ LIVE.q = {}; LIVE.idx = {}; LIVE.glob = null; LIVE.k = {}; }
